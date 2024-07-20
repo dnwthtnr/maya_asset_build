@@ -465,6 +465,9 @@ class SSetupWrapUvSet(SStep):
 
 class SBuildHandler(QtCore.QObject):
     runTriggered = QtCore.Signal(list)
+    
+    stepListUpdated = QtCore.Signal(list)
+    
 
     def __init__(self):
         super(SBuildHandler, self).__init__()
@@ -484,7 +487,7 @@ class SBuildHandler(QtCore.QObject):
 
         
 
-    def registerStep(self, step : SStep, index=None):
+    def registerStep(self, step, index=None):
         if not index:
             index = -1 * len(self.stepList)
 
@@ -494,7 +497,23 @@ class SBuildHandler(QtCore.QObject):
         step.exitInterrupt.connect()
 
         self.stepList.insert(step, index)
+        
+        self.stepListUpdated.emit([index])
         return 0
+    
+    
+    def removeStep(self, index):
+        if( index < 0 or index > len(self.stepList) - 1):
+            raise ValueError("Given index is outside of step list range")
+        self.stepList.pop(index)
+        self.stepListUpdated.emit([index])
+        
+        
+    def moveStep(self, startIndex, endIndex):
+        
+        
+        self.stepListUpdated.emit([startIndex, endIndex])
+        return
     
 
 
@@ -523,12 +542,12 @@ class SBuildRunner(QtCore.QObject):
     buildFinished = QtCore.Signal(int)
     sstepCompleted = QtCore.Signal(int, list)
 
-    def __init__(self, buildData : BuildData):
+    def __init__(self, buildData):
         super(SBuildRunner, self).__init__()
         self.buildData = buildData
 
 
-    def run(self, ssteps : list):
+    def run(self, ssteps):
         for step in ssteps:
             step.run()
             self.sstepCompleted.emit(0, step.getInstanceDataArray())
@@ -536,6 +555,23 @@ class SBuildRunner(QtCore.QObject):
         self.buildFinished.emit(0)
 
 ########### MAIN WINDOW ########################
+
+
+class SBuildViewer(QtWidgets.QWidget):
+    
+    def __init__(self, parent=None, *args, **kwargs):
+        super(SBuildViewer, self).__init__(parent=parent, *args, **kwargs)
+        
+        _centralLayout = QtWidgets.QVBoxLayout()
+        _centralLayout.addStretch(1)
+        _centralLayout.setContentsMargins(10,10,10,10)
+        self.setLayout(_centralLayout)
+        
+        QtWidgets.Q
+    
+    
+
+
 
 
 class MainWindow(QtWidgets.QDialog):
@@ -563,7 +599,12 @@ class MainWindow(QtWidgets.QDialog):
         _centralLayout.addStretch(1)
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
-        self.setupDialog()
+        
+        
+        
+        _viewer = SBuildViewer()
+        self.layout().addWidget(_viewer)
+        # self.setupDialog()
         
         
     def addWidget(self, widget, *args, **kwargs):
