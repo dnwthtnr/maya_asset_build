@@ -192,6 +192,45 @@ def snapTargetToSource(sourceSelComponents, targetSelComponents, normalOffsetMag
 
 
 
+def cacheMesh(targetNode, combineGroup=True):
+    cacheName = targetNode + "__cache"
+        
+    if combineGroup and not isGeo(targetNode):
+        _dupe = cmds.duplicate(targetNode, name=cacheName)[0]
+        
+        combineTargets = cmds.listRelatives(_dupe, allDescendents=True, fullPath=True, type='mesh')
+        if isGeo(_dupe):
+            combineTargets.append(_dupe)
+        
+        result = cmds.polyUnite(combineTargets, name=cacheName)[0]
+        cmds.delete(result, constructionHistory=1)
+        cmds.delete(_dupe)
+        return result
+        
+        
+    result = cmds.duplicate(targetNode, name=cacheName)[0]
+    return result
+    
+
+        
+      
+def transferNormals(source, targets, cacheSource=False):
+    sourceCache = cacheMesh(source) if cacheSource else source
+    for target in targets:
+        
+        if cmds.objectType(target) != 'transform':
+            print (target, "is not of type transform")
+            continue
+        
+        if isGeo(target):
+            cmds.transferAttributes(sourceCache, target, transferNormals=1)
+            print ('Transfered normals from {} to {}'.format(source, target))
+            continue
+            
+        children = cmds.listRelatives(target, children=True, fullPath=True)
+        transferNormals(sourceCache, children, cacheSource=False)
+
+
 # region: |----------- INTERFACE -------------| #
 
 
@@ -347,26 +386,6 @@ def cleanHistory():
 # dict to define pipeline order
 
 
-class BuildData(QtCore.QObject):
-
-    def __new__(cls, *args, **kwargs):
-        instanceCount = 0
-        if hasattr(cls, 'instance'):
-            inst = getattr(cls, 'instance')
-            print(inst)
-        
-        cls.instance = super(MainWindow, cls).__new__(cls, *args, **kwargs)
-
-
-
-    def __init__(self):
-        """
-        Holds data necessary for steps to run.
-        """
-        self.clothLodGroups = []
-        self.wrapLodGroups = []
-        self.headReferenceMesh = None # could resolve from node names
-
 
 class SStep(QtCore.QObject):
     instanceCount = 0
@@ -398,7 +417,7 @@ class SStep(QtCore.QObject):
 
 
     def registerBuildData(self, buildData):
-        if not isinstance(buildData, BuildData):
+        if not isinstance(buildData, SBuildData):
             raise TypeError("BuildData must be of type: 'BuildData'")
         self.buildData = buildData
 
@@ -408,6 +427,23 @@ class SStep(QtCore.QObject):
     def exitInterrupt(self):
         self.exitInterrupt.emit(self.getInstanceDataArray())
 
+class SCompoundStep(QtCore.QObject):
+    instanceCount = 0
+
+    enterInterrupt = QtCore.Signal(list)
+    exitInterrupt = QtCore.Signal(list)
+
+    def __init__(self, name, callback):
+        super(SCompoundStep, self).__init__()
+        
+        SStep.instanceCount += 1
+        self.instanceId = self.getInstanceCount()
+
+        self.buildData = None
+        self.name = name
+        self.callback = callback
+
+        self.exitInterrupt.emit(self.getInstanceDataArray())
 
 
 class SCleanHistory(SStep):
@@ -463,6 +499,30 @@ class SSetupWrapUvSet(SStep):
 #endregion
 
 
+
+class SBuildData(QtCore.QObject):
+
+    def __new__(cls, *args, **kwargs):
+        instanceCount = 0
+        if hasattr(cls, 'instance'):
+            inst = getattr(cls, 'instance')
+            print(inst)
+        
+        cls.instance = super(MainWindow, cls).__new__(cls, *args, **kwargs)
+
+
+
+    def __init__(self):
+        """
+        Holds data necessary for steps to run.
+        """
+        super(SBuildData, self).__init__()
+        
+        self.clothLodGroups = []
+        self.wrapLodGroups = []
+        self.simMeshes = []
+        self.headReferenceMesh = None # could resolve from node names
+
 class SBuildHandler(QtCore.QObject):
     runTriggered = QtCore.Signal(list)
     
@@ -472,7 +532,7 @@ class SBuildHandler(QtCore.QObject):
     def __init__(self):
         super(SBuildHandler, self).__init__()
 
-        self.buildData = BuildData()
+        self.buildData = SBuildData()
         self.buildRunner = SBuildRunner(self.buildData)
         
         self._workerThread = QtCore.QThread()
@@ -556,6 +616,18 @@ class SBuildRunner(QtCore.QObject):
 
 ########### MAIN WINDOW ########################
 
+class NodeGraph(QtWidgets.QWidget):
+    
+    def __init__(self, *args, **kwargs):
+        super(NodeGraph, self).__init__()
+        
+        
+    def paintEvent(*args, **kwargs):
+        
+        painter = QtGui.QPainter()
+        painter.
+        
+        return super().paintEvent(**kwargs)
 
 class SBuildViewer(QtWidgets.QWidget):
     
@@ -567,7 +639,7 @@ class SBuildViewer(QtWidgets.QWidget):
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
         
-        QtWidgets.Q
+        
     
     
 
