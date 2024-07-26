@@ -616,28 +616,92 @@ class SBuildRunner(QtCore.QObject):
 
 ########### MAIN WINDOW ########################
 
-class NodeGraph(QtWidgets.QWidget):
+
+
+class NNodeOutlet(QtWidgets.QGraphicsEllipseItem):
     
     def __init__(self, *args, **kwargs):
-        super(NodeGraph, self).__init__()
-        
-        
-    def paintEvent(*args, **kwargs):
-        
-        painter = QtGui.QPainter()
-        painter.
-        
-        return super().paintEvent(**kwargs)
+        super(NNodeOutlet, self).__init__()
 
-class SBuildViewer(QtWidgets.QWidget):
+class NNodeBody(QtWidgets.QGraphicsRectItem):
+    
+    def __init__(self, *args, **kwargs):
+        super(NNodeBody, self).__init__()
+        self.setFlags(self.ItemIsSelectable | self.ItemIsMovable)
+        
+        
+    def paint(self, painter, style, *args, **kwargs):
+        brush = QtGui.QBrush(QtCore.Qt.red)
+        painter.setBrush(brush)
+        return super().paint(painter, style, *args, **kwargs)
+        
+        
+        # self.setRect(-100, -100, 50, 50)
+
+class NNode(QtWidgets.QGraphicsItemGroup):
+    
+    def __init__(self, *args, **kwargs):
+        super(NNode, self).__init__()
+        
+        
+        self.body = NNodeBody()
+        print self.body.opaqueArea().boundingRect()
+        
+        self.addToGroup(self.body)
+        self.setFlags(self.ItemIsSelectable | self.ItemIsMovable)
+        
+    
+    
+    
+class NGraphView(QtWidgets.QGraphicsView):
+    
+    def __init__(self, *args, **kwargs):
+        super(NGraphView, self).__init__()
+        
+        brush = QtGui.QBrush(QtCore.Qt.red)
+        self.setBackgroundBrush(brush)
+    
+class NGraphScene(QtWidgets.QGraphicsScene):
+    
+    def __init__(self, *args, **kwargs):
+        super(NGraphScene, self).__init__()
+        
+        
+
+
+class SNBuildViewer(QtWidgets.QWidget):
     
     def __init__(self, parent=None, *args, **kwargs):
-        super(SBuildViewer, self).__init__(parent=parent, *args, **kwargs)
+        super(SNBuildViewer, self).__init__(parent=parent, *args, **kwargs)
         
         _centralLayout = QtWidgets.QVBoxLayout()
         _centralLayout.addStretch(1)
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
+        
+        self.setupGraph()
+        
+        
+    def setupGraph(self):
+        self.view = NGraphView()
+        self.scene = NGraphScene()
+        # self.scene.setSceneRect(-150, -150, 150, 150)
+        
+        
+        
+        
+        node = NNode()
+        self.scene.addItem(node)
+        node.setPos(0,0)
+        node.ensureVisible()
+        node.setScale(1000)
+        
+        
+        self.view.setScene(self.scene)
+        self.layout().addWidget(self.view)
+        
+        
+        
         
         
     
@@ -674,7 +738,7 @@ class MainWindow(QtWidgets.QDialog):
         
         
         
-        _viewer = SBuildViewer()
+        _viewer = SNBuildViewer()
         self.layout().addWidget(_viewer)
         # self.setupDialog()
         
