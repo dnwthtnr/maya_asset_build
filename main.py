@@ -2,6 +2,10 @@
 Author: Tanner Dunworth
 """
 
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
 from shiboken2 import wrapInstance
 import shiboken2 as s2
 import sys, os
@@ -83,9 +87,6 @@ def clampEaClothBlendweights(mesh_shapes=None):
     if not mesh_shapes:
         mesh_shapes = cmds.ls(sl=True)
     for mesh_shape in mesh_shapes:
-            
-        
-        
         try:
             values = cmds.getAttr(blendWeightAttr)
         except Exception as e:
@@ -417,6 +418,7 @@ class SStep(QtCore.QObject):
 
 
     def registerBuildData(self, buildData):
+        print(type(buildData))
         if not isinstance(buildData, SBuildData):
             raise TypeError("BuildData must be of type: 'BuildData'")
         self.buildData = buildData
@@ -460,8 +462,6 @@ class SAssignShadingNetwork(SStep):
 
     def __init__(self):
         super(SAssignShadingNetwork, self).__init__(name="Clean History", callback=cleanHistory)
-        
-
 
 class SPivotsToOrigin(SStep):
 
@@ -508,7 +508,8 @@ class SBuildData(QtCore.QObject):
             inst = getattr(cls, 'instance')
             print(inst)
         
-        cls.instance = super(MainWindow, cls).__new__(cls, *args, **kwargs)
+        cls.instance = super(SBuildData, cls).__new__(cls, *args, **kwargs)
+        return cls.instance
 
 
 
@@ -526,7 +527,9 @@ class SBuildData(QtCore.QObject):
 class SBuildHandler(QtCore.QObject):
     runTriggered = QtCore.Signal(list)
     
-    stepListUpdated = QtCore.Signal(list)
+    stepsUpdated = QtCore.Signal(list)
+    stepInserted = QtCore.Signal(int, object)
+    stepDeleted = QtCore.Signal(int)
     
 
     def __init__(self):
@@ -544,39 +547,55 @@ class SBuildHandler(QtCore.QObject):
 
         self.inturruptDeque = []
 
+    def insertStep(self, step, index):
 
-        
-
-    def registerStep(self, step, index=None):
+        print("bs",self.buildData)
         if not index:
-            index = -1 * len(self.stepList)
+            index = 0
 
         step.registerBuildData(self.buildData)
 
-        step.enterInterrupt.connect()
-        step.exitInterrupt.connect()
+        # step.enterInterrupt.connect()
+        # step.exitInterrupt.connect()
 
-        self.stepList.insert(step, index)
+        self.stepList.insert(index, step)
         
-        self.stepListUpdated.emit([index])
+        self.stepInserted.emit(index, step.name)
         return 0
     
     
-    def removeStep(self, index):
+    def deleteStep(self, index):
         if( index < 0 or index > len(self.stepList) - 1):
             raise ValueError("Given index is outside of step list range")
         self.stepList.pop(index)
-        self.stepListUpdated.emit([index])
+        self.stepDeleted.emit(index)
         
         
     def moveStep(self, startIndex, endIndex):
         
         
-        self.stepListUpdated.emit([startIndex, endIndex])
+        self.stepsUpdated.emit([startIndex, endIndex])
         return
     
+########################
+
+    @QtCore.Slot("")
+    def handleInsertStepRequest(self, index):
+        # take type
+
+        step = SCleanHistory()
+        self.insertStep(step, index)
 
 
+    @QtCore.Slot("")
+    def handleDeleteStepRequest(self, index):
+        # take type
+
+        self.deleteStep(index)
+
+
+
+################
     def run(self):
         # QThread stuff then use inturrupt to pause 
         self.buildRunner.moveToThread(self._workerThread)
@@ -616,7 +635,7 @@ class SBuildRunner(QtCore.QObject):
 
 ########### MAIN WINDOW ########################
 
-
+# region: NODE GRAPH
 
 class NNodeOutlet(QtWidgets.QGraphicsEllipseItem):
     
@@ -627,13 +646,14 @@ class NNodeBody(QtWidgets.QGraphicsRectItem):
     
     def __init__(self, *args, **kwargs):
         super(NNodeBody, self).__init__()
+
         self.setFlags(self.ItemIsSelectable | self.ItemIsMovable)
         
         
     def paint(self, painter, style, *args, **kwargs):
-        brush = QtGui.QBrush(QtCore.Qt.red)
+        brush = QtGui.QBrush(QtCore.Qt.blue)
         painter.setBrush(brush)
-        return super().paint(painter, style, *args, **kwargs)
+        return super(NNodeBody, self).paint(painter, style, *args, **kwargs)
         
         
         # self.setRect(-100, -100, 50, 50)
@@ -649,10 +669,7 @@ class NNode(QtWidgets.QGraphicsItemGroup):
         
         self.addToGroup(self.body)
         self.setFlags(self.ItemIsSelectable | self.ItemIsMovable)
-        
-    
-    
-    
+
 class NGraphView(QtWidgets.QGraphicsView):
     
     def __init__(self, *args, **kwargs):
@@ -667,9 +684,124 @@ class NGraphScene(QtWidgets.QGraphicsScene):
         super(NGraphScene, self).__init__()
         
         
+# endregion
+
+# region: STACK VIEW
+
+class StackElement(QtWidgets.QWidget):
+    
+    
+    def __init__(self, name="Step", *args, **kwargs):
+        super(StackElement, self).__init__(*args, **kwargs)
+        
+        _layout = QtWidgets.QHBoxLayout()
+        self.setLayout(_layout)
+        
+        
+        self.nameLineEdit = QtWidgets.QLineEdit(text=name)
+        self.layout().addWidget(self.nameLineEdit)
+        
+        
+    def setName(self, name):
+        self.nameLineEdit.setText(name)
+
+
+class StackView(QtWidgets.QWidget):
+    addButtonClicked = QtCore.Signal()
+    deleteButtonClicked = QtCore.Signal()
+    elementMoved = QtCore.Signal(int, int)
+    updateRequest = QtCore.Signal(list)
+    
+    
+    
+    
+    def __init__(self, *args, **kwargs):
+        super(StackView, self).__init__(*args, **kwargs)
+        
+        self.stackScene = self.setupStackScene()
+        self.toolbar = self.setupToolbar()
+        
+        _layout = QtWidgets.QVBoxLayout()
+        self.setLayout(_layout)
+        
+        self.layout().addWidget(self.toolbar)
+        self.layout().addWidget(self.stackScene)
+        
+        
+    def setupStackScene(self):
+        _layout = QtWidgets.QVBoxLayout()
+        _layout.addStretch(1)
+
+        widget = QtWidgets.QWidget()
+        widget.setLayout(_layout)
+        return widget
+
+    def setupToolbar(self):
+        _layout = QtWidgets.QHBoxLayout()
+        widget = QtWidgets.QWidget()
+        widget.setLayout(_layout)
+
+        _addStep = QtWidgets.QPushButton(text="Add Step")
+        _addStep.clicked.connect(self.addClickEvent)
+
+
+        _deleteStep = QtWidgets.QPushButton(text="Delete Step")
+        _deleteStep.clicked.connect(self.deleteClickEvent)
+
+
+        for _widget in [_addStep, _deleteStep]:
+            _layout.addWidget(_widget)
+
+        return widget
+    
+    
+    def elementAt(self, index):
+        return self.stackScene.layout().itemAt(index).widget()
+
+
+    # region: Update Ui Elements
+        
+    def insertStackElement(self, index, name):
+        step = StackElement(name)
+        self.stackScene.layout().insertWidget(index, step)
+
+        logger.debug("Inserted '{}' into stack at index '{}'.".format(name, index))
+        
+
+    def deleteStackElement(self, index):
+        element = self.elementAt(index)
+
+        print(element)
+        self.stackScene.layout().removeWidget(element)
+        element.deleteLater()
+        print(index)
+        logger.info("Widget {} at index: {} removed!".format(element, index))
+
+    def updateStackElement(self, index, data):
+        _widget = self.elementAt(index)
+        _widget.setName(data)
+
+    # endregion
+    
+    
+    #SIGNALS
+    
+    def deleteClickEvent(self):
+        self.deleteButtonClicked.emit()
+    
+    def addClickEvent(self):
+        self.addButtonClicked.emit()
+
+
+#endregion
 
 
 class SNBuildViewer(QtWidgets.QWidget):
+    # Only pass around indexes 
+    insertStepRequest = QtCore.Signal(int)
+    deleteStepRequest = QtCore.Signal(int)
+    moveStepRequest = QtCore.Signal(int, int)
+    updateStepRequest = QtCore.Signal(int, dict)
     
     def __init__(self, parent=None, *args, **kwargs):
         super(SNBuildViewer, self).__init__(parent=parent, *args, **kwargs)
@@ -679,27 +811,72 @@ class SNBuildViewer(QtWidgets.QWidget):
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
         
-        self.setupGraph()
-        
-        
-    def setupGraph(self):
+
+        self._nodeView = self.setupNodeView()
+        self._stackView = self.setupStackView()
+
+        self.layout().addWidget(self._stackView)
+
+    def setupNodeView(self):
         self.view = NGraphView()
         self.scene = NGraphScene()
         # self.scene.setSceneRect(-150, -150, 150, 150)
-        
-        
-        
-        
-        node = NNode()
+
+
+
+
+        node = NNodeBody()
         self.scene.addItem(node)
         node.setPos(0,0)
         node.ensureVisible()
         node.setScale(1000)
-        
-        
+
         self.view.setScene(self.scene)
-        self.layout().addWidget(self.view)
-        
+
+    def setupStackView(self):
+        _view = StackView()
+
+        _view.addButtonClicked.connect(self.handleAddButtonClick)
+        _view.deleteButtonClicked.connect(self.handleDeleteButtonClick)
+
+        return _view
+
+
+
+    @QtCore.Slot("handleAddButtonClick")
+    def handleAddButtonClick(self):
+        self.insertStepRequest.emit(0)
+
+
+    @QtCore.Slot("handleDeleteButtonClick")
+    def handleDeleteButtonClick(self):
+        self.deleteStepRequest.emit(0)
+
+###############################################
+
+    @QtCore.Slot("insertElement")
+    def insertElement(self, data, index):
+        self._stackView.insertStackElement(data, index)
+
+    @QtCore.Slot("deleteElement")
+    def deleteElement(self, index):
+        self._stackView.deleteStackElement(index)
+
+    @QtCore.Slot("updateElements")
+    def updateElements(self, updateList):
+        """
+
+        Parameters
+        ----------
+        updateList: list[(int, dict)]
+
+        """
+        # [ (INDEX: int, DATA: dict) ]
+        for index, data in updateList:
+            self._stackView.updateStackElement(index, data)
+
+
+
         
         
         
@@ -737,9 +914,20 @@ class MainWindow(QtWidgets.QDialog):
         self.setLayout(_centralLayout)
         
         
-        
-        _viewer = SNBuildViewer()
-        self.layout().addWidget(_viewer)
+
+        self.buildHandler = SBuildHandler()
+        self.buildViewer = SNBuildViewer()
+
+        self.buildHandler.stepsUpdated.connect(self.buildViewer.updateElements)
+        self.buildHandler.stepInserted.connect(self.buildViewer.insertElement)
+        self.buildHandler.stepDeleted.connect(self.buildViewer.deleteElement)
+
+        self.buildViewer.insertStepRequest.connect(self.buildHandler.handleInsertStepRequest)
+        self.buildViewer.deleteStepRequest.connect(self.buildHandler.handleDeleteStepRequest)
+        # self.buildViewer.moveStepRequest.connect(self.buildHandler.moveStepEvent)
+        # _viewer.updateStepRequest.connect()
+
+        self.layout().addWidget(self.buildViewer)
         # self.setupDialog()
         
         
