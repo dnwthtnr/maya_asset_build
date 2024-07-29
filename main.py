@@ -724,7 +724,7 @@ class StackView(QtWidgets.QWidget):
         _layout = QtWidgets.QVBoxLayout()
         self.setLayout(_layout)
         
-        self.layout().addWidget(self.toolbar)
+        self.layout().addWidget(self.toolbar, alignment=QtCore.Qt.AlignTop)
         self.layout().addWidget(self.stackScene)
         
         
