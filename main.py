@@ -566,7 +566,7 @@ class SBuildHandler(QtCore.QObject):
     
     def deleteStep(self, index):
         if( index < 0 or index > len(self.stepList) - 1):
-            raise ValueError("Given index is outside of step list range")
+            raise ValueError("Given index: {} is outside of step list range".format(index))
         self.stepList.pop(index)
         self.stepDeleted.emit(index)
         
@@ -588,11 +588,19 @@ class SBuildHandler(QtCore.QObject):
 
 
     @QtCore.Slot("")
-    def handleDeleteStepRequest(self, index):
+    def handleDeleteStepRequest(self, indexList):
         # take type
 
-        self.deleteStep(index)
+        for index in sorted(indexList, reverse=1):
+            self.deleteStep(index)
 
+    @QtCore.Slot('')
+    def handleStepSelectionRequest(self, indexList):
+        # TODO: emit data for steps to display
+
+        # handle
+
+        return
 
 
 ################
@@ -686,7 +694,37 @@ class NGraphScene(QtWidgets.QGraphicsScene):
         
 # endregion
 
+
 # region: STACK VIEW
+
+class LayoutSelectionEventHandler(QtCore.QObject):
+    selectionChanged = QtCore.Signal()
+
+    def __init__(self):
+        super(LayoutSelectionEventHandler, self).__init__()
+
+    def eventFilter(self, qobject, qevent):
+        if isinstance(qevent, QtGui.QMouseEvent):
+            self.handleMouseEvent(qobject, qevent)
+
+        return False
+
+    def handleMouseEvent(self, qobject, qevent):
+        if qevent.type() == QtCore.QEvent.Type.MouseButtonPress:
+            if not hasattr(qobject, "selected") or not qobject.selected:
+                qobject.selected = True
+                qobject.setStyleSheet("border: 2px solid blue")
+                logger.debug("QObject: {} -- [selected] attribute set to {}")
+
+            else:
+                qobject.selected = False
+                qobject.setStyleSheet("border: 0px")
+                logger.debug("QObject: {} -- Set to selected")
+
+            self.selectionChanged.emit()
+            logger.debug("QObject: [ {}.selected ] \t attribute set to {}".format(qobject, qobject.selected))
+
+
 
 class StackElement(QtWidgets.QWidget):
     
@@ -697,27 +735,33 @@ class StackElement(QtWidgets.QWidget):
         _layout = QtWidgets.QHBoxLayout()
         self.setLayout(_layout)
         
-        
-        self.nameLineEdit = QtWidgets.QLineEdit(text=name)
-        self.layout().addWidget(self.nameLineEdit)
+        self.nameLabel = QtWidgets.QLabel(text=name)
+
+        self.layout().addWidget(self.nameLabel)
         
         
     def setName(self, name):
-        self.nameLineEdit.setText(name)
+        self.nameLabel.setText(name)
 
 
 class StackView(QtWidgets.QWidget):
     addButtonClicked = QtCore.Signal()
-    deleteButtonClicked = QtCore.Signal()
+    deleteButtonClicked = QtCore.Signal(list)
+    buildButtonClicked = QtCore.Signal()
+
     elementMoved = QtCore.Signal(int, int)
     updateRequest = QtCore.Signal(list)
+    elementSelectionChanged = QtCore.Signal(list)
     
     
     
     
     def __init__(self, *args, **kwargs):
         super(StackView, self).__init__(*args, **kwargs)
-        
+
+        self.selectionEventFilter = LayoutSelectionEventHandler()
+        self.selectionEventFilter.selectionChanged.connect(self.handleSelectionChanged)
+
         self.stackScene = self.setupStackScene()
         self.toolbar = self.setupToolbar()
         
@@ -741,6 +785,10 @@ class StackView(QtWidgets.QWidget):
         widget = QtWidgets.QWidget()
         widget.setLayout(_layout)
 
+
+        _buildStep = QtWidgets.QPushButton(text="Run Build")
+        _buildStep.clicked.connect(self.buildClickEvent)
+
         _addStep = QtWidgets.QPushButton(text="Add Step")
         _addStep.clicked.connect(self.addClickEvent)
 
@@ -749,7 +797,7 @@ class StackView(QtWidgets.QWidget):
         _deleteStep.clicked.connect(self.deleteClickEvent)
 
 
-        for _widget in [_addStep, _deleteStep]:
+        for _widget in [_buildStep, _addStep, _deleteStep]:
             _layout.addWidget(_widget)
 
         return widget
@@ -758,11 +806,27 @@ class StackView(QtWidgets.QWidget):
     def elementAt(self, index):
         return self.stackScene.layout().itemAt(index).widget()
 
+    def selectedIndices(self):
+        selectedIndices = []
+        for i in range(0, self.stackScene.layout().count() - 1):
+            _widget = self.elementAt(i)
+            if not hasattr(_widget, 'selected'):
+                continue
+            if not _widget.selected:
+                continue
+            selectedIndices.append(i)
+        return selectedIndices
+
 
     # region: Update Ui Elements
+
+    @QtCore.Slot('')
+    def handleSelectionChanged(self, *args):
+        self.elementSelectionChanged.emit(self.selectedIndices())
         
     def insertStackElement(self, index, name):
         step = StackElement(name)
+        step.installEventFilter(self.selectionEventFilter)
         self.stackScene.layout().insertWidget(index, step)
 
         logger.debug("Inserted '{}' into stack at index '{}'.".format(name, index))
@@ -785,23 +849,33 @@ class StackView(QtWidgets.QWidget):
     
     
     #SIGNALS
-    
+
+    @QtCore.Slot('')
     def deleteClickEvent(self):
-        self.deleteButtonClicked.emit()
-    
+        self.deleteButtonClicked.emit(self.selectedIndices())
+
+    @QtCore.Slot('')
     def addClickEvent(self):
         self.addButtonClicked.emit()
+
+    @QtCore.Slot('')
+    def buildClickEvent(self):
+        self.buildButtonClicked.emit()
 
 
 #endregion
 
 
 class SNBuildViewer(QtWidgets.QWidget):
-    # Only pass around indexes 
+    # Only pass around indexes
+    buildRequest = QtCore.Signal()
     insertStepRequest = QtCore.Signal(int)
-    deleteStepRequest = QtCore.Signal(int)
+    deleteStepRequest = QtCore.Signal(list)
+
     moveStepRequest = QtCore.Signal(int, int)
     updateStepRequest = QtCore.Signal(int, dict)
+
+    stepSelectionRequest = QtCore.Signal(list)
     
     def __init__(self, parent=None, *args, **kwargs):
         super(SNBuildViewer, self).__init__(parent=parent, *args, **kwargs)
@@ -815,7 +889,7 @@ class SNBuildViewer(QtWidgets.QWidget):
         self._nodeView = self.setupNodeView()
         self._stackView = self.setupStackView()
 
-        self.layout().addWidget(self._stackView)
+        self.layout().addWidget(self._stackView, alignment=QtCore.Qt.AlignTop)
 
     def setupNodeView(self):
         self.view = NGraphView()
@@ -837,7 +911,9 @@ class SNBuildViewer(QtWidgets.QWidget):
         _view = StackView()
 
         _view.addButtonClicked.connect(self.handleAddButtonClick)
+        _view.buildButtonClicked.connect(self.handleBuildButtonClick)
         _view.deleteButtonClicked.connect(self.handleDeleteButtonClick)
+        _view.elementSelectionChanged.connect(self.handleSelectionChange)
 
         return _view
 
@@ -849,8 +925,17 @@ class SNBuildViewer(QtWidgets.QWidget):
 
 
     @QtCore.Slot("handleDeleteButtonClick")
-    def handleDeleteButtonClick(self):
-        self.deleteStepRequest.emit(0)
+    def handleBuildButtonClick(self):
+        self.buildRequest.emit()
+
+
+    @QtCore.Slot("handleDeleteButtonClick")
+    def handleDeleteButtonClick(self, indexList):
+        self.deleteStepRequest.emit(indexList)
+
+    @QtCore.Slot('')
+    def handleSelectionChange(self, selectedIndices):
+        self.stepSelectionRequest.emit(selectedIndices)
 
 ###############################################
 
@@ -924,10 +1009,11 @@ class MainWindow(QtWidgets.QDialog):
 
         self.buildViewer.insertStepRequest.connect(self.buildHandler.handleInsertStepRequest)
         self.buildViewer.deleteStepRequest.connect(self.buildHandler.handleDeleteStepRequest)
+        self.buildViewer.stepSelectionRequest.connect(self.buildHandler.handleStepSelectionRequest)
         # self.buildViewer.moveStepRequest.connect(self.buildHandler.moveStepEvent)
         # _viewer.updateStepRequest.connect()
 
-        self.layout().addWidget(self.buildViewer)
+        self.layout().insertWidget(0, self.buildViewer, alignment=QtCore.Qt.AlignTop)
         # self.setupDialog()
         
         
@@ -1049,6 +1135,7 @@ def combineGroupedMeshes(selectionList):
 
 def buildWindow(parent=None):
     _win = MainWindow(parent=parent)
+    _win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
     return _win
 
 
@@ -1101,5 +1188,3 @@ def main(standalone=False):
 if __name__ == "__main__":
     print('run')
     main(True)
-
-
