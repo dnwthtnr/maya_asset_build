@@ -400,6 +400,10 @@ class SStep(QtCore.QObject):
         SStep.instanceCount += 1
         self.instanceId = self.getInstanceCount()
 
+        self.stepConfig = {
+            "Step Name": name
+        }
+
         self.buildData = None
         self.name = name
         self.callback = callback
@@ -415,6 +419,10 @@ class SStep(QtCore.QObject):
     def run(self):
         print ('running', self.__class__.__name__)
         return
+
+
+    def getConfigData(self):
+        return self.stepConfig
 
 
     def registerBuildData(self, buildData):
@@ -511,8 +519,6 @@ class SBuildData(QtCore.QObject):
         cls.instance = super(SBuildData, cls).__new__(cls, *args, **kwargs)
         return cls.instance
 
-
-
     def __init__(self):
         """
         Holds data necessary for steps to run.
@@ -530,6 +536,11 @@ class SBuildHandler(QtCore.QObject):
     stepsUpdated = QtCore.Signal(list)
     stepInserted = QtCore.Signal(int, object)
     stepDeleted = QtCore.Signal(int)
+
+    stepStarted = QtCore.Signal(int)
+    stepCompleted = QtCore.Signal(int)
+    errorInBuild = QtCore.Signal(int)
+
     
 
     def __init__(self):
@@ -537,6 +548,7 @@ class SBuildHandler(QtCore.QObject):
 
         self.buildData = SBuildData()
         self.buildRunner = SBuildRunner(self.buildData)
+        self.buildRunner.sstepCompleted.connect(self.handleSStepComplete)
         
         self._workerThread = QtCore.QThread()
         
@@ -544,12 +556,11 @@ class SBuildHandler(QtCore.QObject):
         self.buildRunner.buildFinished.connect(self.handleBuildFinished)
 
         self.stepList = []
-
         self.inturruptDeque = []
 
-    def insertStep(self, step, index):
 
-        print("bs",self.buildData)
+    def insertStep(self, step, index):
+        logger.debug("Inserting step: {} at index: {}".format(step, index))
         if not index:
             index = 0
 
@@ -572,13 +583,36 @@ class SBuildHandler(QtCore.QObject):
         
         
     def moveStep(self, startIndex, endIndex):
-        
-        
         self.stepsUpdated.emit([startIndex, endIndex])
-        return
-    
-########################
 
+    def getStepIndex(self, stepInstanceId):
+        for i, step in enumerate(self.stepList):
+            if step.instanceId == stepInstanceId:
+                return i
+
+        return -1
+
+
+# region: Runner Slots
+    @QtCore.Slot("")
+    def handleSStepComplete(self, exitCode, stepInstanceArray):
+        index = self.getStepIndex(stepInstanceArray[0])
+        if exitCode == 0:
+            self.stepCompleted.emit(index)
+            return
+
+        self.errorInBuild.emit(index)
+
+
+    @QtCore.Slot("")
+    def handleSStepStart(self, stepInstanceArray):
+        logger("Starting step: {}".format(stepInstanceArray))
+        index = self.getStepIndex(stepInstanceArray[0])
+        self.stepStarted.emit(index)
+
+#endregion
+########################
+# region: View Slots
     @QtCore.Slot("")
     def handleInsertStepRequest(self, index):
         # take type
@@ -594,19 +628,31 @@ class SBuildHandler(QtCore.QObject):
         for index in sorted(indexList, reverse=1):
             self.deleteStep(index)
 
+
+
     @QtCore.Slot('')
     def handleStepSelectionRequest(self, indexList):
         # TODO: emit data for steps to display
 
+        steps = [self.stepList[i] for i in indexList]
         # handle
+        config = {}
+        for step in steps:
+            print("DISPLAY:", step.getConfigData())
 
-        return
 
+    @QtCore.Slot('')
+    def handleBuildRequest(self):
+        self.run()
 
+# endregion
 ################
+
     def run(self):
-        # QThread stuff then use inturrupt to pause 
+        # QThread stuff then use inturrupt to pause
+        logger.debug("Moving runner to worker thread and starting build.")
         self.buildRunner.moveToThread(self._workerThread)
+        self._workerThread.start()
         self.runTriggered.emit(self.stepList)
         
     
@@ -635,9 +681,13 @@ class SBuildRunner(QtCore.QObject):
 
 
     def run(self, ssteps):
+        print('received')
         for step in ssteps:
-            step.run()
-            self.sstepCompleted.emit(0, step.getInstanceDataArray())
+            try:
+                step.run()
+                self.sstepCompleted.emit(0, step.getInstanceDataArray())
+            except Exception as e:
+                self.sstepCompleted.emit(1, step.getInstanceDataArray())
             
         self.buildFinished.emit(0)
 
@@ -724,8 +774,6 @@ class LayoutSelectionEventHandler(QtCore.QObject):
             self.selectionChanged.emit()
             logger.debug("QObject: [ {}.selected ] \t attribute set to {}".format(qobject, qobject.selected))
 
-
-
 class StackElement(QtWidgets.QWidget):
     
     
@@ -742,7 +790,6 @@ class StackElement(QtWidgets.QWidget):
         
     def setName(self, name):
         self.nameLabel.setText(name)
-
 
 class StackView(QtWidgets.QWidget):
     addButtonClicked = QtCore.Signal()
@@ -866,6 +913,54 @@ class StackView(QtWidgets.QWidget):
 #endregion
 
 
+# region: DETAIL PANEL
+
+
+
+class StepView(QtWidgets.QWidget):
+    saveUpdatedDataRequest = QtCore.Signal(dict)
+
+    def __init__(self, *args, **kwargs):
+        super(StepView, self).__init__(*args, **kwargs)
+        
+        _layout = QtWidgets.QVBoxLayout()
+        _layout.addStretch(1)
+        self.setlayout(_layout)
+
+        self.rawTextEdit = QtWidgets.QTextEdit()
+        self.saveButton = QtWidgets.QPushButton(text="Save")
+        self.saveButton.clicked.connect(self.handleSaveButtonClick)
+        
+        self.layout().insertWidget(0, self.saveButton, alignment=QtCore.Qt.AlignBottom)
+        self.layout().insertWidget(0, self.rawTextEdit, alignment=QtCore.Qt.AlignTop)
+
+
+    @QtCore.Slot('')
+    def populatePanel(self, stepData):
+        """
+
+        Parameters
+        ----------
+        stepData: dict
+
+        """
+        # show steps data
+        self.rawTextEdit.setText(str(stepData))
+
+
+    @QtCore.Slot('')
+    def handleSaveButtonClick(self):
+        updatedStr = self.rawTextEdit.toPlainText()
+        try:
+            dataAsDict = dict(updatedStr)
+        except Exception as e:
+            logger.warn("Error hit while attempting to convert config data to 'dict'")
+            return
+        
+        self.saveUpdatedDataRequest.emit(dataAsDict)
+
+#endregion
+
 class SNBuildViewer(QtWidgets.QWidget):
     # Only pass around indexes
     buildRequest = QtCore.Signal()
@@ -888,8 +983,12 @@ class SNBuildViewer(QtWidgets.QWidget):
 
         self._nodeView = self.setupNodeView()
         self._stackView = self.setupStackView()
+        
+        # TODO: CONNECT SIGNALS TO THIS
+        self._stepView = StepView()
 
         self.layout().addWidget(self._stackView, alignment=QtCore.Qt.AlignTop)
+        self.layout().addWidget(self._stepView, alignment=QtCore.Qt.AlignTop)
 
     def setupNodeView(self):
         self.view = NGraphView()
@@ -1010,6 +1109,7 @@ class MainWindow(QtWidgets.QDialog):
         self.buildViewer.insertStepRequest.connect(self.buildHandler.handleInsertStepRequest)
         self.buildViewer.deleteStepRequest.connect(self.buildHandler.handleDeleteStepRequest)
         self.buildViewer.stepSelectionRequest.connect(self.buildHandler.handleStepSelectionRequest)
+        self.buildViewer.buildRequest.connect(self.buildHandler.handleBuildRequest)
         # self.buildViewer.moveStepRequest.connect(self.buildHandler.moveStepEvent)
         # _viewer.updateStepRequest.connect()
 
