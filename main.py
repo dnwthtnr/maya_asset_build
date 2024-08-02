@@ -1,10 +1,18 @@
 """
 Author: Tanner Dunworth
 """
-
+import sys
 import logging
+import ast
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+formatter = logging.Formatter("%(levelname)s | %(filename)s - %(funcName)s - %(lineno)d: %(message)s")
+streamHandler = logging.StreamHandler(sys.stdout)
+streamHandler.setFormatter(formatter)
+
+logger.addHandler(streamHandler)
 
 from shiboken2 import wrapInstance
 import shiboken2 as s2
@@ -38,11 +46,7 @@ lodWeightInfluenceMaxes = [8, 6, 4, 4, 2, 1]
 #endregion
 
 
-
-# region: |------------------ ACTIONS (Snipped from old script) ----------------| #
-
-
-
+# region: ACTIONS
 def isGeo(objectName):
     children = cmds.listRelatives(objectName, children=True, fullPath=True)
     if children is None or len(children) == 0:
@@ -53,7 +57,6 @@ def isGeo(objectName):
         return False
     
     return True
-
 
 def enforceInfluenceMaxOnLods(parentGroup, lodInfluenceMaxes):
     children = [child for child in cmds.listRelatives(parentGroup, children=True, fullPath=True) if "lod" in child]
@@ -80,8 +83,6 @@ def enforceInfluenceMaxOnLods(parentGroup, lodInfluenceMaxes):
         except Exception as e:
             print "Encountered exception while attempting to enforce max weights"
             print e
-            
-            
 
 def clampEaClothBlendweights(mesh_shapes=None):
     if not mesh_shapes:
@@ -118,16 +119,6 @@ def clampLodEaClothBlendweights(lodParentGroup):
     except Exception as e:
         print "Encountered exception when trying to clamp ea cloth blend weights:", e
 
-
-
-
-# endregion
-
-#####################
-
-
-
-
 def getClosestVertex(mDagPath, mPoint):
     """
     MDagPath
@@ -140,7 +131,6 @@ def getClosestVertex(mDagPath, mPoint):
     mMesh.getClosestPoint(mPoint, closestPoint, om.MSpace.kWorld)
     
     return closestPoint
-
 
 def snapTargetToClosestSourcePoints(sourceSelComponents, targetSelComponents, normalOffsetMagnitude):
     
@@ -179,8 +169,6 @@ def snapTargetToClosestSourcePoints(sourceSelComponents, targetSelComponents, no
         next(targetVertIter)
     
     return 0
-    
-
 
 def snapTargetToSource(sourceSelComponents, targetSelComponents, normalOffsetMagnitude=0, mode="closestPoint"):
     """
@@ -190,8 +178,6 @@ def snapTargetToSource(sourceSelComponents, targetSelComponents, normalOffsetMag
     if mode == "closestPoint":
         result = snapTargetToClosestSourcePoints(sourceSelComponents, targetSelComponents, normalOffsetMagnitude)
         print result    
-
-
 
 def cacheMesh(targetNode, combineGroup=True):
     cacheName = targetNode + "__cache"
@@ -211,10 +197,7 @@ def cacheMesh(targetNode, combineGroup=True):
         
     result = cmds.duplicate(targetNode, name=cacheName)[0]
     return result
-    
 
-        
-      
 def transferNormals(source, targets, cacheSource=False):
     sourceCache = cacheMesh(source) if cacheSource else source
     for target in targets:
@@ -230,6 +213,21 @@ def transferNormals(source, targets, cacheSource=False):
             
         children = cmds.listRelatives(target, children=True, fullPath=True)
         transferNormals(sourceCache, children, cacheSource=False)
+
+def combineGroupedMeshes(selectionList):
+    for i in range(selectionList.length()):
+        currentMDag = om.MDagPath()
+        current = selectionList.getDagPath(i, currentMDag)
+        currentType = currentMDag.apiType()
+
+        if currentType not in [om.MFnMesh, om.MFnTransform]:
+            return
+
+def cleanHistory():
+    print("Clean History")
+    return
+
+#endregion
 
 
 # region: |----------- INTERFACE -------------| #
@@ -378,18 +376,15 @@ class Section(QtWidgets.QWidget):
         
     def addWidget(self, widget, *args, **kwargs):
         self._sectionLayout.insertWidget(0, widget, *args, **kwargs)
-    
 
-def cleanHistory():
-    print("Clean History")
-    return
 
 # dict to define pipeline order
 
 
-
+# region: STEPS
 class SStep(QtCore.QObject):
     instanceCount = 0
+    instanceType = "base"
 
     enterInterrupt = QtCore.Signal(list)
     exitInterrupt = QtCore.Signal(list)
@@ -411,6 +406,10 @@ class SStep(QtCore.QObject):
     @classmethod
     def getInstanceCount(cls):
         return cls.instanceCount
+
+    @classmethod
+    def getInstanceType(cls):
+        return cls.instanceType
     
     def getInstanceDataArray(self):
         return [self.instanceId, self.__class__.__name__]
@@ -423,6 +422,10 @@ class SStep(QtCore.QObject):
 
     def getConfigData(self):
         return self.stepConfig
+
+    def setConfigData(self, configData):
+        # TODO: Validate Data
+        self.stepConfig = configData
 
 
     def registerBuildData(self, buildData):
@@ -439,6 +442,7 @@ class SStep(QtCore.QObject):
 
 class SCompoundStep(QtCore.QObject):
     instanceCount = 0
+    instanceType = "Compound"
 
     enterInterrupt = QtCore.Signal(list)
     exitInterrupt = QtCore.Signal(list)
@@ -455,8 +459,8 @@ class SCompoundStep(QtCore.QObject):
 
         self.exitInterrupt.emit(self.getInstanceDataArray())
 
-
 class SCleanHistory(SStep):
+    instanceType = "Clean History"
 
     def __init__(self):
         super(SCleanHistory, self).__init__(name="Clean History", callback=cleanHistory)
@@ -536,6 +540,9 @@ class SBuildHandler(QtCore.QObject):
     stepsUpdated = QtCore.Signal(list)
     stepInserted = QtCore.Signal(int, object)
     stepDeleted = QtCore.Signal(int)
+    stepSelectionData = QtCore.Signal(dict)
+
+    addStepDialogData = QtCore.Signal(list)
 
     stepStarted = QtCore.Signal(int)
     stepCompleted = QtCore.Signal(int)
@@ -543,8 +550,8 @@ class SBuildHandler(QtCore.QObject):
 
     
 
-    def __init__(self):
-        super(SBuildHandler, self).__init__()
+    def __init__(self, stepTypes, *args, **kwargs):
+        super(SBuildHandler, self).__init__(*args, **kwargs)
 
         self.buildData = SBuildData()
         self.buildRunner = SBuildRunner(self.buildData)
@@ -555,11 +562,14 @@ class SBuildHandler(QtCore.QObject):
         self.runTriggered.connect(self.buildRunner.run)
         self.buildRunner.buildFinished.connect(self.handleBuildFinished)
 
+        self.stepTypes = stepTypes
+
         self.stepList = []
         self.inturruptDeque = []
 
 
-    def insertStep(self, step, index):
+    def insertStep(self, stepType, index):
+        step = stepType()
         logger.debug("Inserting step: {} at index: {}".format(step, index))
         if not index:
             index = 0
@@ -583,7 +593,12 @@ class SBuildHandler(QtCore.QObject):
         
         
     def moveStep(self, startIndex, endIndex):
-        self.stepsUpdated.emit([startIndex, endIndex])
+        updateList = []
+        for i in range(startIndex, endIndex):
+            _step = self.stepList[i]
+            updateList.append( (i, _step.getConfigData()) )
+
+        self.stepsUpdated.emit(updateList)
 
     def getStepIndex(self, stepInstanceId):
         for i, step in enumerate(self.stepList):
@@ -604,6 +619,7 @@ class SBuildHandler(QtCore.QObject):
         self.errorInBuild.emit(index)
 
 
+
     @QtCore.Slot("")
     def handleSStepStart(self, stepInstanceArray):
         logger("Starting step: {}".format(stepInstanceArray))
@@ -613,13 +629,23 @@ class SBuildHandler(QtCore.QObject):
 #endregion
 ########################
 # region: View Slots
+
     @QtCore.Slot("")
-    def handleInsertStepRequest(self, index):
+    def handleAddStepDialogRequest(self):
+        # take type
+        self.addStepDialogData.emit(self.stepTypes)
+
+    @QtCore.Slot("")
+    def handleSaveStepConfigRequest(self, indexList, stepConfig):
         # take type
 
-        step = SCleanHistory()
-        self.insertStep(step, index)
+        updateList = []
+        for index in indexList:
+            _step = self.stepList[index]
+            _step.setConfigData(stepConfig)
+            updateList.append( (index, _step.getConfigData()) )
 
+        self.stepsUpdated.emit( updateList )
 
     @QtCore.Slot("")
     def handleDeleteStepRequest(self, indexList):
@@ -639,6 +665,8 @@ class SBuildHandler(QtCore.QObject):
         config = {}
         for step in steps:
             print("DISPLAY:", step.getConfigData())
+            config.update(step.getConfigData())
+        self.stepSelectionData.emit(config)
 
 
     @QtCore.Slot('')
@@ -691,7 +719,11 @@ class SBuildRunner(QtCore.QObject):
             
         self.buildFinished.emit(0)
 
-########### MAIN WINDOW ########################
+#endregion
+
+
+
+
 
 # region: NODE GRAPH
 
@@ -748,10 +780,16 @@ class NGraphScene(QtWidgets.QGraphicsScene):
 # region: STACK VIEW
 
 class LayoutSelectionEventHandler(QtCore.QObject):
+    SingleSelection = "SINGLE"
+    MultiSelection = "MULTI"
+
+
     selectionChanged = QtCore.Signal()
 
-    def __init__(self):
+    def __init__(self, selectionMode=MultiSelection):
         super(LayoutSelectionEventHandler, self).__init__()
+        self.selectionMode = selectionMode
+        self.selectedObjects = []
 
     def eventFilter(self, qobject, qevent):
         if isinstance(qevent, QtGui.QMouseEvent):
@@ -760,15 +798,52 @@ class LayoutSelectionEventHandler(QtCore.QObject):
         return False
 
     def handleMouseEvent(self, qobject, qevent):
+        if self.selectionMode == self.MultiSelection:
+            self.handleMultiSelectionMouseEvent(qobject, qevent)
+        if self.selectionMode == self.SingleSelection:
+            self.handleSingleSelectionMouseEvent(qobject, qevent)
+
+        return False
+
+    def handleMultiSelectionMouseEvent(self, qobject, qevent):
         if qevent.type() == QtCore.QEvent.Type.MouseButtonPress:
             if not hasattr(qobject, "selected") or not qobject.selected:
                 qobject.selected = True
+
+                self.selectedObjects.append(qobject)
+
+                qobject.setStyleSheet("border: 2px solid blue")
+                logger.debug("QObject: {} -- [selected] attribute set to {}")
+
+            else:
+                qobject.selected = False
+                self.selectedObjects.pop(self.selectedObjects.index(qobject))
+                qobject.setStyleSheet("border: 0px")
+                logger.debug("QObject: {} -- Set to selected")
+
+            self.selectionChanged.emit()
+            logger.debug("QObject: [ {}.selected ] \t attribute set to {}".format(qobject, qobject.selected))
+
+    def handleSingleSelectionMouseEvent(self, qobject, qevent):
+        if qevent.type() == QtCore.QEvent.Type.MouseButtonPress:
+            if not hasattr(qobject, "selected") or not qobject.selected:
+
+                for obj in self.selectedObjects:
+                    obj.selected=False
+                    obj.setStyleSheet("border: 0px")
+                    self.selectedObjects.remove(obj)
+
+                qobject.selected = True
+                self.selectedObjects.append(qobject)
                 qobject.setStyleSheet("border: 2px solid blue")
                 logger.debug("QObject: {} -- [selected] attribute set to {}")
 
             else:
                 qobject.selected = False
                 qobject.setStyleSheet("border: 0px")
+
+                self.selectedObjects = []
+
                 logger.debug("QObject: {} -- Set to selected")
 
             self.selectionChanged.emit()
@@ -789,7 +864,8 @@ class StackElement(QtWidgets.QWidget):
         
         
     def setName(self, name):
-        self.nameLabel.setText(name)
+
+        self.nameLabel.setText(name.get("Step Name"))
 
 class StackView(QtWidgets.QWidget):
     addButtonClicked = QtCore.Signal()
@@ -914,23 +990,72 @@ class StackView(QtWidgets.QWidget):
 
 
 # region: DETAIL PANEL
+class StepSelector(QtWidgets.QDialog):
+    stepTypeSelected = QtCore.Signal(object)
 
+    def __init__(self, types, *args, **kwargs):
+        super(StepSelector, self).__init__(*args, **kwargs)
 
+        self.selectionEventFilter = LayoutSelectionEventHandler(selectionMode=LayoutSelectionEventHandler.SingleSelection)
+
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        self.typeLayout = QtWidgets.QVBoxLayout()
+        _typeWidget = QtWidgets.QWidget()
+        _typeWidget.setLayout(self.typeLayout)
+        for type in types:
+            _label = QtWidgets.QLabel(text=type.getInstanceType())
+            _label.typeReference = type
+            _label.installEventFilter(self.selectionEventFilter)
+            self.typeLayout.addWidget(_label)
+
+        selectButton = QtWidgets.QPushButton(text="Select")
+        selectButton.clicked.connect(self.handleSelectButtonClick)
+        cancelButton = QtWidgets.QPushButton(text="Cancel")
+        cancelButton.clicked.connect(self.close)
+        _buttonlayout = QtWidgets.QHBoxLayout()
+        _buttonlayout.addWidget(selectButton)
+        _buttonlayout.addWidget(cancelButton)
+        _buttonWidget = QtWidgets.QWidget()
+        _buttonWidget.setLayout(_buttonlayout)
+
+        self.layout().addWidget(_typeWidget)
+        self.layout().addWidget(_buttonWidget)
+
+    def getSelectedType(self):
+        for i in range(0, self.typeLayout.count() - 1):
+            _widget = self.typeLayout.itemAt(i).widget()
+            if not hasattr(_widget, 'selected'):
+                continue
+            if not _widget.selected:
+                continue
+            _type = _widget.typeReference
+            return _type
+
+    def handleSelectButtonClick(self):
+        selectedType = self.getSelectedType()
+        if selectedType:
+            self.stepTypeSelected.emit(selectedType)
+            self.close()
+            return
+
+        logger.error("Must select a step type.")
+        return
 
 class StepView(QtWidgets.QWidget):
     saveUpdatedDataRequest = QtCore.Signal(dict)
 
     def __init__(self, *args, **kwargs):
         super(StepView, self).__init__(*args, **kwargs)
-        
+
         _layout = QtWidgets.QVBoxLayout()
         _layout.addStretch(1)
-        self.setlayout(_layout)
+        self.setLayout(_layout)
 
         self.rawTextEdit = QtWidgets.QTextEdit()
         self.saveButton = QtWidgets.QPushButton(text="Save")
         self.saveButton.clicked.connect(self.handleSaveButtonClick)
-        
+
         self.layout().insertWidget(0, self.saveButton, alignment=QtCore.Qt.AlignBottom)
         self.layout().insertWidget(0, self.rawTextEdit, alignment=QtCore.Qt.AlignTop)
 
@@ -948,24 +1073,34 @@ class StepView(QtWidgets.QWidget):
         self.rawTextEdit.setText(str(stepData))
 
 
+    def clearPanel(self):
+        self.rawTextEdit.clear()
+
+
     @QtCore.Slot('')
     def handleSaveButtonClick(self):
         updatedStr = self.rawTextEdit.toPlainText()
         try:
-            dataAsDict = dict(updatedStr)
+            evalData = ast.literal_eval(updatedStr)
+
         except Exception as e:
             logger.warn("Error hit while attempting to convert config data to 'dict'")
+            logger.debug(e)
             return
-        
-        self.saveUpdatedDataRequest.emit(dataAsDict)
+
+        self.saveUpdatedDataRequest.emit(evalData)
 
 #endregion
+
 
 class SNBuildViewer(QtWidgets.QWidget):
     # Only pass around indexes
     buildRequest = QtCore.Signal()
-    insertStepRequest = QtCore.Signal(int)
+    addStepDialogRequest = QtCore.Signal()
     deleteStepRequest = QtCore.Signal(list)
+    addStepRequest = QtCore.Signal(object, int)
+
+    saveStepConfigRequest = QtCore.Signal(list, dict)
 
     moveStepRequest = QtCore.Signal(int, int)
     updateStepRequest = QtCore.Signal(int, dict)
@@ -983,9 +1118,9 @@ class SNBuildViewer(QtWidgets.QWidget):
 
         self._nodeView = self.setupNodeView()
         self._stackView = self.setupStackView()
-        
+
         # TODO: CONNECT SIGNALS TO THIS
-        self._stepView = StepView()
+        self._stepView = self.setupStepView()
 
         self.layout().addWidget(self._stackView, alignment=QtCore.Qt.AlignTop)
         self.layout().addWidget(self._stepView, alignment=QtCore.Qt.AlignTop)
@@ -1009,18 +1144,32 @@ class SNBuildViewer(QtWidgets.QWidget):
     def setupStackView(self):
         _view = StackView()
 
-        _view.addButtonClicked.connect(self.handleAddButtonClick)
+        _view.addButtonClicked.connect(self.handleAddDialogClick)
         _view.buildButtonClicked.connect(self.handleBuildButtonClick)
         _view.deleteButtonClicked.connect(self.handleDeleteButtonClick)
         _view.elementSelectionChanged.connect(self.handleSelectionChange)
 
         return _view
 
+    def setupStepView(self):
+        _view = StepView()
+        _view.saveUpdatedDataRequest.connect(self.handleSaveStepClick)
+        return _view
 
 
     @QtCore.Slot("handleAddButtonClick")
-    def handleAddButtonClick(self):
-        self.insertStepRequest.emit(0)
+    def handleSaveStepClick(self, configData):
+        _indexList = self._stackView.selectedIndices()
+        # TODO: Keep track of selection
+        self.saveStepConfigRequest.emit(_indexList, configData)
+
+    @QtCore.Slot("handleAddButtonClick")
+    def handleAddDialogClick(self):
+        self.addStepDialogRequest.emit()
+
+    @QtCore.Slot("handleAddButtonClick")
+    def handleStepTypeSelection(self, type):
+        self.addStepRequest.emit(type)
 
 
     @QtCore.Slot("handleDeleteButtonClick")
@@ -1037,6 +1186,25 @@ class SNBuildViewer(QtWidgets.QWidget):
         self.stepSelectionRequest.emit(selectedIndices)
 
 ###############################################
+    @QtCore.Slot("")
+    def displayStepData(self, data):
+        self._stepView.clearPanel()
+        self._stepView.populatePanel(data)
+
+
+    @QtCore.Slot('')
+    def handleAddStepDialogData(self, types):
+        _stepSelector = StepSelector(types=types, parent=self)
+        _stepSelector.stepTypeSelected.connect(self.handleAddStepRequest)
+        _stepSelector.show()
+
+    def handleAddStepRequest(self, type):
+        selectedIndices = sorted(self._stackView.selectedIndices(), reverse=True)
+        index = 0
+        if selectedIndices:
+            index = selectedIndices[-1]
+
+        self.addStepRequest.emit(type, index)
 
     @QtCore.Slot("insertElement")
     def insertElement(self, data, index):
@@ -1061,28 +1229,10 @@ class SNBuildViewer(QtWidgets.QWidget):
 
 
 
-        
-        
-        
-        
-    
-    
-
-
 
 
 class MainWindow(QtWidgets.QDialog):
     _ClassId = "MMainWindow"
-    
-    def __new__(cls, parent=None, *args, **kwargs):
-        if parent:
-            for child in parent.children():
-                if child.objectName() == MainWindow._ClassId:
-                    s2.delete(child)
-            
-        if not hasattr(cls, 'instance'):
-            cls.instance = super(MainWindow, cls).__new__(cls, *args, **kwargs)
-        return cls.instance
     
     def __init__(self, parent=None, *args, **kwargs):
         super(MainWindow, self).__init__(parent=parent, *args, **kwargs)
@@ -1096,61 +1246,50 @@ class MainWindow(QtWidgets.QDialog):
         _centralLayout.addStretch(1)
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
-        
-        
 
-        self.buildHandler = SBuildHandler()
+        self.buildHandler = SBuildHandler(stepTypes=[
+            SCleanHistory,
+            SAssignShadingNetwork,
+            SCleanNameSpace
+            ])
+
         self.buildViewer = SNBuildViewer()
+
+        self.connectSignals()
+
+        # self.buildViewer.moveStepRequest.connect(self.buildHandler.moveStepEvent)
+
+        self.layout().insertWidget(0, self.buildViewer, alignment=QtCore.Qt.AlignTop)
+        # self.setupDialog()
+
+    def connectSignals(self):
 
         self.buildHandler.stepsUpdated.connect(self.buildViewer.updateElements)
         self.buildHandler.stepInserted.connect(self.buildViewer.insertElement)
         self.buildHandler.stepDeleted.connect(self.buildViewer.deleteElement)
+        self.buildHandler.stepSelectionData.connect(self.buildViewer.displayStepData)
+        self.buildHandler.addStepDialogData.connect(self.buildViewer.handleAddStepDialogData)
 
-        self.buildViewer.insertStepRequest.connect(self.buildHandler.handleInsertStepRequest)
+        self.buildViewer.addStepDialogRequest.connect(self.buildHandler.handleAddStepDialogRequest)
         self.buildViewer.deleteStepRequest.connect(self.buildHandler.handleDeleteStepRequest)
         self.buildViewer.stepSelectionRequest.connect(self.buildHandler.handleStepSelectionRequest)
         self.buildViewer.buildRequest.connect(self.buildHandler.handleBuildRequest)
-        # self.buildViewer.moveStepRequest.connect(self.buildHandler.moveStepEvent)
-        # _viewer.updateStepRequest.connect()
+        self.buildViewer.saveStepConfigRequest.connect(self.buildHandler.handleSaveStepConfigRequest)
+        self.buildViewer.addStepRequest.connect(self.buildHandler.insertStep)
 
-        self.layout().insertWidget(0, self.buildViewer, alignment=QtCore.Qt.AlignTop)
-        # self.setupDialog()
-        
-        
-    def addWidget(self, widget, *args, **kwargs):
-        self.layout().insertWidget(0, widget)
-        
-        
-    def mainGrpSelComponent(self):
-        """
-        Returns list with MDagPath or empty list
-        """
-        return self.mainGrpSelection.getSelComponents()
-        
-        
-    def clothLodGrpSelComponent(self):
-        """
-        Returns list with MDagPath or empty list
-        """
-        return self.clothLodGrpSelection.getSelComponents()
-        
-        
-        
-    def setupDialog(self):
-        
-        
+
         # region: UTILITY
-        
+
         clampLodInfluences = QtWidgets.QPushButton(text="Clamp LOD Influences")
         clampLodInfluences.clicked.connect(self.clampMainGrpLodInfluences)
-        
-        
+
+
         clampLodBlendWeights = QtWidgets.QPushButton(text="Clamp LOD Blend Weights")
         clampLodBlendWeights.clicked.connect(self.clampMainGrpClothBlendWeights)
-        
+
         button = QtWidgets.QPushButton(text="Nothing Yet...")
-    
-        
+
+
         utilityWidgets = [
         clampLodInfluences,
         clampLodBlendWeights,
@@ -1160,84 +1299,52 @@ class MainWindow(QtWidgets.QDialog):
         [self.utilitiesSection.addWidget(_widget) for _widget in utilityWidgets]
         self.addWidget(self.utilitiesSection)
         # endregion
-        
-        
+
+
         #region: PARAMS
         self.mainGrpSelection = CaptureSelectionWidget(title="Main Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
         self.capGrpSelection = CaptureSelectionWidget(title="Cap Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
         self.clothLodGrpSelection = CaptureSelectionWidget(title="Cloth Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
         self.clothGrpSelection = CaptureSelectionWidget(title="Cloth Sim Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
-        
+
         paramWidgets = [
-                self.mainGrpSelection, 
-                self.capGrpSelection, 
+                self.mainGrpSelection,
+                self.capGrpSelection,
                 self.clothLodGrpSelection,
                 self.clothGrpSelection
                 ]
-        
-        
+
+
         self.paramSection = Section("Parameters", QtCore.Qt.Vertical)
         [self.paramSection.addWidget(_widget) for _widget in paramWidgets]
         self.addWidget(self.paramSection)
         #endregion
-        
-        return   
-        
-        
+
+        return
+
+
     ####### TODO: Utility Methods -- Decouple into data class with signals at some point -- this is quicker for now
-    
-    def clampMainGrpLodInfluences(self):
-        selComponent = self.mainGrpSelComponent()
-        if len(selComponent) == 0:
-            raise ValueError("No Main Group Has Been Specified!")
-            return
-            
-        mainGrpName = selComponent[0].fullPathName()
-        
-        enforceInfluenceMaxOnLods(parentGroup=mainGrpName, lodInfluenceMaxes=lodWeightInfluenceMaxes)
-        
-    
-    def clampMainGrpClothBlendWeights(self):
-        selComponent = self.clothLodGrpSelComponent()
-        if len(selComponent) == 0:
-            raise ValueError("No Main Group Has Been Specified!")
-            return
-            
-        grpName = selComponent[0].fullPathName()
-        
-        clampLodEaClothBlendweights(lodParentGroup=grpName)
-        
 
-#endregion
 
-# om.MFnMesh
-# om.MfnTransform
+    def __new__(cls, parent=None, *args, **kwargs):
+        if parent:
+            for child in parent.children():
+                if child.objectName() == MainWindow._ClassId:
+                    s2.delete(child)
 
-def combineGroupedMeshes(selectionList):
-    
-        
-        
-        
-    for i in range(selectionList.length()):
-        currentMDag = om.MDagPath()
-        current = selectionList.getDagPath(i, currentMDag)
-        currentType = currentMDag.apiType()
-        
-        if currentType not in [om.MFnMesh, om.MFnTransform]:
-            return 
+        if not hasattr(cls, 'instance'):
+            cls.instance = super(MainWindow, cls).__new__(cls, *args, **kwargs)
+        return cls.instance
 
 
 
 
-
-# region: Startup
-
+# region: STARTUP
 
 def buildWindow(parent=None):
     _win = MainWindow(parent=parent)
     _win.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
     return _win
-
 
 
 def runStandalone():
@@ -1252,9 +1359,6 @@ def runStandalone():
         win.show()
 
         app.exec_()
-
-
-
 
 
 def runInMaya():
@@ -1283,7 +1387,7 @@ def main(standalone=False):
         return
     
     runInMaya()
-    
+# endregion
     
 if __name__ == "__main__":
     print('run')
