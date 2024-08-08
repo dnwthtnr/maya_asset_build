@@ -1,6 +1,7 @@
 """
 Author: Tanner Dunworth
 """
+import copy
 import sys
 import logging
 import ast
@@ -230,11 +231,188 @@ def cleanHistory():
 #endregion
 
 
+# region: SPE
+def isGeo(objectName):
+    children = cmds.listRelatives(objectName, children=True, fullPath=True)
+    if children is None or len(children) == 0:
+        return False
+    isAllShape = [cmds.objectType(child) == 'mesh' for child in children]
+
+    if False in isAllShape:
+        return False
+
+    return True
+
+
+def getFileList(fullPath=True):
+    _currentFile = cmds.file(q=True, sn=True)
+    print
+    _currentFile
+    _fileDir = os.path.dirname(_currentFile)
+    contents = os.listdir(_fileDir)
+    contents.remove(_currentFile[len(_fileDir + '/'):])  # Remove current file from list
+
+    if (fullPath):
+        contents = [os.path.join(_fileDir, filename) for filename in contents]
+
+    return contents
+
+
+print(getFileList())
+
+#fileSelection = 'D:/Morrison_dev/MorrisonData/Raw/Characters/Generic/Human/Universal/a_HAR_HN_FauxHawk_01/Models/a_HAR_HN_FauxHawk_01_card.mb'
+
+
+def importFile(filepath, namespace):
+    newNodes = cmds.file(filepath, i=True, returnNewNodes=True, namespace=namespace)
+    return newNodes
+
+
+#newNodes = importFile(fileSelection, "NEWSTUFF")
+
+
+def sortNodes(nodes, blacklist=None, whitelist=None):
+    """
+
+    Parameters
+    ----------
+    nodes
+    blacklist
+    whitelist
+
+    Returns
+    -------
+    dict: Dict of str: list ('transform': [list of transforms])
+
+    """
+    if not blacklist:
+        blacklist = []
+    if not whitelist:
+        whitelist = []
+    nodesByType = {}
+
+    for node in nodes:
+        _type = cmds.objectType(node)
+
+        if whitelist and _type not in whitelist:
+            continue
+        if _type in blacklist:
+            continue
+        if _type in nodesByType.keys():
+            nodesByType[_type].append(node)
+            continue
+
+        nodesByType[_type] = [node]
+    return nodesByType
+
+
+#transforms = sortNodes(newNodes, whitelist=["transform"])
+#print(transforms)
+
+
+def deleteHistory(nodes):
+    cmds.delete(*nodes, constructionHistory=True)
+
+
+#deleteHistory(transforms.get('transform'))
+
+
+def getMainGroups(nodes):
+    mainGroups = []
+    for node in nodes:
+        nodeShortname = node.split("|")[-1]
+        print
+        nodeShortname
+        if 'main' in nodeShortname.lower():
+            mainGroups.append(node)
+
+    return mainGroups
+
+
+#mainGroups = getMainGroups(transforms.get("transform"))
+#print(mainGroups)
+
+
+def suffixExistingNodes(nodes):
+    for node in nodes:
+        cmds.rename(node, "{}_OLD".format(node))
+
+
+# mainGroups is either one main group with cap and card for each lod or 2 groups 1 for caps and 1 for cards
+
+# o Maybe as a placeholder before implementing branching pipelines have steps that will just do
+#   nothing if a condition is not satisfied
+
+
+def filterCapGroup(mainGroupList):
+    capGroup = None
+    for group in mainGroupList:
+        if not 'main' in group.lower():
+            continue
+        if 'cap' in group.lower():
+            capGroup = group
+
+    return capGroup
+
+
+def filterMainGroup(mainGroupList):
+    mainGroup = None
+    for group in mainGroupList:
+        if not 'main' in group.lower():
+            continue
+        if 'cap' not in group.lower():
+            mainGroup = group
+
+    return mainGroup
+
+
+def getLodContents(mainGroup, lodLevel):
+    _lodName = "lod{}".format(str
+    {lodlevel))
+    lodPath = "{}|{}".format(mainGroup, lodLevel)
+    groupContents = cmds.listRelatives(lodPath, ad=True, f=True)
+    return groupContents
+
+
+def populateLodGroups(mainGroup, lodLevelCount):
+    for i in range(0, lodLevelCount):
+        node = cmds.createNode('transform', n="lod{}".format(str(i)))
+        cmds.parent(node, mainGroup)
+
+
+def getMainGroupLodCount(mainGroup):
+    count = 0
+    for group in cmds.listRelatives(mainGroup, children=True):
+        if 'lod' in group.lower():
+            count += 1
+    return count
+
+
+def ensureEstablishedMainGroups(mainGroupList):
+    _capGroup = filterCapGroup(mainGroupList)
+    _mainGroup = filterMainGroup(mainGroupList)
+    lodCount = getMainGroupLodCount(_mainGroup)
+
+    if not _capgroup:
+        contents = getLodContents(_mainGroup, 0)
+        capNodes = []
+
+        _capGroup = cmds.createNode('transform', name='cap_main')
+        populateLodGroups(_capGroup, 5)
+
+        for content in contents:
+            if 'cap' in content.lower() and isGeo(content):
+                capNodes.append(content)
+
+    return
+#endregion
+
+
 class MayaTypes:
     transform = "transform"
     mesh = 'mesh'
     joint = 'joint'
-
+    nodelist = 'nodeList'
 
 
 # region: |----------- INTERFACE -------------| #
@@ -401,6 +579,9 @@ class SStep(QtCore.QObject):
     enterInterrupt = QtCore.Signal(list)
     exitInterrupt = QtCore.Signal(list)
 
+    shareEntry = QtCore.Signal(int, str)
+    unshareEntry = QtCore.Signal(int, str)
+
     def __init__(self, name, typeStr):
         super(SStep, self).__init__()
         
@@ -413,12 +594,44 @@ class SStep(QtCore.QObject):
         self.registerConfigDataEntry('Name', str)
         self.setConfigDataEntry('Name', name)
 
-        self.registerConfigDataEntry("Step Type", str)
+        self.registerConfigDataEntry("Step Type", str, locked=True)
         self.setConfigDataEntry("Step Type", self.instanceType)
 
         self.buildData = None
         self.instanceType = typeStr
         self.name = name
+
+
+    def output(self):
+        """
+        Defined the outputs for the given step
+        Returns
+        -------
+
+        """
+        return
+
+    def share(self, key):
+        """
+        Emits signal to share the given key with other steps
+
+        Parameters
+        ----------
+        key: str
+            Key to share
+
+        """
+        self.shareEntry.emit(self.instanceId, key)
+
+    def unshare(self, key):
+        """
+        Emits signal to unshyare the given key with other steps
+        Parameters
+        ----------
+        key: str
+            Key to unshare
+        """
+        self.unshareKey.emit(self.instanceId, key)
 
     @classmethod
     def getInstanceCount(cls):
@@ -441,13 +654,31 @@ class SStep(QtCore.QObject):
     def getInstanceDataArray(self):
         return [self.instanceId, self.__class__.__name__]
     
+    def solveSharedValues(self):
+        """
+        Iterates through config to resolve any shared attributes and get true value
+
+        """
+        logger.debug("Resolving shared values for class: {}, {}".format(self, self.stepConfig))
+        for key, value in copy.copy(self.stepConfig.items()):
+            if not "$SHARE$" in value:
+                continue
+                
+            solvedValue = self.buildData.getSharedEntry(value)
+            self.setConfigDataEntry(key, solvedValue)
+            
 
     def run(self):
         print ('running', self.__class__.__name__)
         return
 
-    def registerConfigDataEntry(self, key, valueType):
+    def outputType(self):
+        raise NotImplementedError()
+
+    def registerConfigDataEntry(self, key, valueType, locked=False, isGlobal=False):
         self.stepConfigDisplayData[key] = valueType
+        if isGlobal:
+            self.shareEntry.emit(self, key)
 
     def setConfigDataEntry(self, key, value):
         if not key in self.getConfigDisplayData().keys():
@@ -459,6 +690,12 @@ class SStep(QtCore.QObject):
             raise TypeError(msg)
 
         self.stepConfig[key] = value
+
+    def getConfigDataEntry(self, key):
+        value = self.stepConfig.get(key)
+        if not value:
+            raise ValueError("No Value for key: {}".format(key))
+        return value
 
     def getConfigDisplayData(self):
         return self.stepConfigDisplayData
@@ -482,6 +719,75 @@ class SStep(QtCore.QObject):
 
     def exitInterrupt(self):
         self.exitInterrupt.emit(self.getInstanceDataArray())
+
+
+class SBuildData(SStep):
+    class Keys:
+        clothLodGrp = "Cloth Lod Group"
+        wrapLodGrp = "Wrapping Lod Group"
+        simGrp = "Sim Group"
+        refSkel = "Reference Skeleton"
+        lodLevels = "Lod Levels"
+        skinWeightInfluences = "Lod Skin Weight Inf. Maxes"
+
+    def __new__(cls, *args, **kwargs):
+        instanceCount = 0
+        if hasattr(cls, 'instance'):
+            inst = getattr(cls, 'instance')
+            print(inst)
+
+        cls.instance = super(SBuildData, cls).__new__(cls, *args, **kwargs)
+        return cls.instance
+
+    def __init__(self):
+        """
+        Holds data necessary for steps to run.
+        """
+        super(SBuildData, self).__init__(name="Build Data", typeStr="SBuildData")
+
+        self.clothLodGroups = []
+        self.wrapLodGroups = []
+        self.simMeshes = []
+        self.headReferenceMesh = None  # could resolve from node names
+
+        self.sharedEntryRegistrar = {}
+
+        self.registerConfigDataEntry(key="Cloth Lod Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Wrapping Lod Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Sim Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Reference Skeleton", valueType=MayaTypes.joint)
+
+        self.registerConfigDataEntry(key="Lod Levels", valueType=int)
+        self.setConfigDataEntry("Lod Levels", 5)
+
+        self.registerConfigDataEntry(key=SBuildData.Keys.skinWeightInfluences, valueType=list)
+        self.setConfigDataEntry(SBuildData.Keys.skinWeightInfluences, [8, 6, 4, 4, 2, 1])
+
+    def run(self):
+        pass
+
+
+
+
+    def getSharedEntry(self, shareString):
+        if not "$SHARE$" in shareString:
+            raise ValueError("Value is not share string")
+        logger.debug("Getting shared entry in SBuildData: [{}, {}]".format(instance, key))
+        instanceDict = self.sharedEntryRegistrar.get(instance)
+        val = instanceDict.get(key)
+        return val
+
+    def registerSharedEntry(self, instance, key):
+        logger.debug("Sharing entry in SBuildData: [{}, {}]".format(instance, key))
+        if not instance in self.sharedEntryRegistrar.keys():
+            self.sharedEntryRegistrar[instance] = {}
+
+        self.sharedEntryRegistrar[instance][key] = None
+
+    def deregisterSharedEntry(self, instance, key):
+        logger.debug("Unsharing entry in SBuildData: [{}, {}]".format(instance, key))
+        del self.sharedEntryRegistrar.get(instance)[key]
+
 
 class SCompoundStep(QtCore.QObject):
     instanceCount = 0
@@ -510,6 +816,13 @@ class SCleanHistory(SStep):
 
         self.registerConfigDataEntry(key="Target Objects", valueType=list)
         self.setConfigDataEntry("Target Objects", ["main"])
+
+    def run(self):
+        targetObjectList = self.getConfigDataEntry("Target Objects")
+        logger.info("Cleaning history on target nodes: {}".format(targetObjectList))
+        for obj in targetObjectList:
+            cmds.delete(obj, constructionHistory=True)
+            logger.debug("Deleted construction history for node: {} and it's children".format(obj))
 
 
 
@@ -549,6 +862,65 @@ class SSetupWrapUvSet(SStep):
         # **DONE
         
 
+class SImportFile(SStep):
+    instanceType = "Import"
+
+    def __init__(self):
+        super(SImportFile, self).__init__(name="Clean History", typeStr="SImportFile")
+
+        self.registerConfigDataEntry(key="Target File", valueType=str)
+        self.registerConfigDataEntry(key="Is Updated Lods", valueType=bool)
+        self.registerConfigDataEntry()
+
+
+        # TODO: Add output declaration -- decide to share output... This 'output' parameter is added to SBuildData
+        # TODO: SBuildData display will have '+ add' button which asks user for type to add (kTransform, list, int) -- lets user define parameters | if parameter is maya type then display a selection widget
+        # TODO: In step config let user select from optional build parameters (either predefined or shared)
+
+
+    def run(self):
+        filepath = self.getConfigDataEntry("Target File")
+        isLods = self.getConfigDataEntry("Is Updated Lods")
+        if not isLods:
+            newNodes = cmds.file(filepath, i=True, rnn=True)
+            logger.info("File imported. New Nodes: {}".format(newNodes))
+            return
+
+        newNodes = cmds.file(filepath, i=True, rnn=True)
+        transformNodes = sortNodes(newNodes, whitelist='transform').get('transform')
+        mainTransforms = getMainGroups(transformNodes)
+
+        _lodCount = self.buildData.getConfigDataEntry(SBuildData.Keys.lodLevels)
+        _capGroup = filterCapGroup(mainTransforms)
+        _mainGroup = filterMainGroup(mainTransforms)
+
+        if not _capGroup:
+            lod0Content = getLodContents(mainGroup=_mainGroup, lodLevel=0)
+            capNodes = []
+
+            _capGroup = cmds.createNode('transform', name='cap_main')
+            populateLodGroups(_capGroup, 5)
+
+            for content in lod0Content:
+                if 'cap' in content.lower() and isGeo(content):
+                    capNodes.append(content)
+
+    def output(self):
+        return MayaTypes.nodelist
+
+class SEnsureValidClothLodGroup(SStep):
+    instanceType = "Forceful Validate Cloth Lod"
+
+    def __init__(self):
+        super(SEnsureValidClothLodGroup, self).__init__(name="Clean History", typeStr="SCleanHistory")
+
+        self.registerConfigDataEntry(key="Target Group", valueType=list)
+        self.setConfigDataEntry("Target Objects", ["main"])
+
+    def run(self):
+        clothLodGroup = self.buildData.getConfigDataEntry(SBuildData.Keys.clothLodGrp)
+        lodLevelCount = self.buildData.getConfigDataEntry(SBuildData.Keys.lodLevels)
+
 #endregion
 
 SStep.stepTypeList.append(SCleanHistory)
@@ -556,37 +928,6 @@ SStep.stepTypeList.append(SCleanNameSpace)
 SStep.stepTypeList.append(SAssignShadingNetwork)
 SStep.stepTypeList.append(SPivotsToOrigin)
 SStep.stepTypeList.append(SSetupWrapUvSet)
-
-class SBuildData(SStep):
-
-    def __new__(cls, *args, **kwargs):
-        instanceCount = 0
-        if hasattr(cls, 'instance'):
-            inst = getattr(cls, 'instance')
-            print(inst)
-        
-        cls.instance = super(SBuildData, cls).__new__(cls, *args, **kwargs)
-        return cls.instance
-
-    def __init__(self):
-        """
-        Holds data necessary for steps to run.
-        """
-        super(SBuildData, self).__init__(name="Build Data", typeStr="SBuildData")
-        
-        self.clothLodGroups = []
-        self.wrapLodGroups = []
-        self.simMeshes = []
-        self.headReferenceMesh = None # could resolve from node names
-
-        self.registerConfigDataEntry(key="Cloth Lod Group", valueType=MayaTypes.transform)
-        self.registerConfigDataEntry(key="Wrapping Lod Group", valueType=MayaTypes.transform)
-        self.registerConfigDataEntry(key="Sim Group", valueType=MayaTypes.transform)
-        self.registerConfigDataEntry(key="Reference Skeleton", valueType=MayaTypes.joint)
-
-
-    def run(self):
-        pass
 
 class SBuildHandler(QtCore.QObject):
     runTriggered = QtCore.Signal(list)
@@ -602,6 +943,8 @@ class SBuildHandler(QtCore.QObject):
     stepCompleted = QtCore.Signal(int)
     errorInBuild = QtCore.Signal(int)
 
+    sharedEntryData = QtCore.Signal(list)
+
     
 
     def __init__(self, *args, **kwargs):
@@ -615,6 +958,7 @@ class SBuildHandler(QtCore.QObject):
         
         self._workerThread = QtCore.QThread()
         
+        # called in self.run
         self.runTriggered.connect(self.buildRunner.run)
         self.buildRunner.buildFinished.connect(self.handleBuildFinished)
 
@@ -626,13 +970,29 @@ class SBuildHandler(QtCore.QObject):
         self.inturruptDeque = []
 
 
-    def insertStep(self, stepType, index):
+    def handleRunTriggered(self):
+        self.buildRunner.run()
+
+    def insertStep(self, stepType: SStep, index):
+        """
+
+        Parameters
+        ----------
+        stepType: SStep
+        index: int
+
+        Returns
+        -------
+
+        """
         step = stepType()
         logger.debug("Inserting step: {} at index: {}".format(step, index))
         if not index:
             index = 0
 
         step.registerBuildData(self.buildData)
+        step.shareEntry.connect(self.buildData.registerSharedEntry)
+        step.unshareEntry.connect(self.buildData.deregisterSharedEntry)
 
         # step.enterInterrupt.connect()
         # step.exitInterrupt.connect()
@@ -725,6 +1085,7 @@ class SBuildHandler(QtCore.QObject):
 
     @QtCore.Slot('')
     def handleStepSelectionRequest(self, indexList):
+        logger.debug("Step selection request : ({})".format(indexList))
         configValues = {}
         displayConfig = {}
         steps = []
@@ -745,6 +1106,32 @@ class SBuildHandler(QtCore.QObject):
         self.selectionData.emit(displayConfig, configValues)
         pass
 
+    @QtCore.Slot('')
+    def handleStepSharedRequest(self, index):
+        """
+        for the given index gathers all valid shared entries that could be used
+        Parameters
+        ----------
+        index
+
+        Signals
+        -------
+        sharedEntryData: list[str]
+            Emits list of serialized shared entries
+
+        """
+        # TODO: Check typing 
+        sharables = []
+        for instanceId, shareDict in self.buildData.sharedEntryRegistrar.items():
+            instanceIndex = self.getStepIndex(instanceId)
+            if instanceIndex > instanceId:
+                # instance happens after step requesting connectables
+                continue
+                
+            for key in list(shareDict.keys()):
+                sharedRef = "$SHARE${}.{}".format(instanceId, key)
+                sharables.append(sharedRef)
+        self.sharedEntryData.emit(sharables)
 
     @QtCore.Slot('')
     def handleBuildRequest(self):
@@ -753,9 +1140,11 @@ class SBuildHandler(QtCore.QObject):
 # endregion
 ################
 
+
     def run(self):
         # QThread stuff then use inturrupt to pause
         logger.debug("Moving runner to worker thread and starting build.")
+               
         self.buildRunner.moveToThread(self._workerThread)
         self._workerThread.start()
         self.runTriggered.emit(self.stepList)
@@ -789,6 +1178,7 @@ class SBuildRunner(QtCore.QObject):
         print('received')
         for step in ssteps:
             try:
+                step.solveSharedValues()
                 step.run()
                 self.sstepCompleted.emit(0, step.getInstanceDataArray())
             except Exception as e:
@@ -924,7 +1314,7 @@ class LayoutSelectionEventHandler(QtCore.QObject):
                 qobject.selected = True
                 self.selectedObjects.append(qobject)
                 qobject.setStyleSheet(self.selectedStyle(qobject.objectName()))
-                logger.debug("QObject: {} -- [selected] attribute set to {}")
+                logger.debug("QObject: {} -- [selected] attribute set to {}".format(qobject, qobject.selected))
 
             else:
                 qobject.selected = False
@@ -1039,6 +1429,9 @@ class StackView(Widget):
 
     @QtCore.Slot('')
     def handleSelectionChanged(self, *args):
+        print(self.selectedIndices())
+        if not self.selectedIndices():
+            return
         self.elementSelectionChanged.emit(self.selectedIndices())
         
     def insertStackElement(self, index, name):
@@ -1137,6 +1530,8 @@ class StepSelector(QtWidgets.QDialog):
 
 class StepView(Widget):
     saveUpdatedDataRequest = QtCore.Signal(dict)
+    
+    sharedDataRequest = QtCore.Signal(int)
 
     def __init__(self, *args, **kwargs):
         super(StepView, self).__init__(*args, **kwargs)
@@ -1165,6 +1560,14 @@ class StepView(Widget):
         # show steps data
         self.rawTextEdit.setText(str(stepData))
 
+
+    def displayConnectableEntries(self):
+        # TODO: Setup better step display -- make menu on each element with mixing to 'connect attr'
+        
+        # TODO; from there send request to build handler to get shared attr and spawn a menu when response is heard
+        
+        # TODO; After selecting shared value it will set element to 'connected' state and the value will be a #SHARE$ string.
+        return
 
     def clearPanel(self):
         self.rawTextEdit.clear()
@@ -1258,7 +1661,7 @@ class SNBuildViewer(Widget):
         _view.setStyleSheet('#paramStackView {border: 2px dotted red} #StackScene{border: 0px};')
 
         _view.toolbar.hide()
-        _view.elementSelectionChanged.connect(partial(self.handleSelectionChange, parameter=True))
+        _view.elementSelectionChanged.connect(self.handleParamSelectionChange)
 
         return _view
 
@@ -1292,13 +1695,15 @@ class SNBuildViewer(Widget):
         self.deleteStepRequest.emit(indexList)
 
     @QtCore.Slot('')
-    def handleSelectionChange(self, selectedIndices, parameter=False):
-        if parameter:
-            newIndices = [i*-1 for i in selectedIndices]
-            self.stepSelectionRequest.emit(newIndices)
-            return
-
+    def handleSelectionChange(self, selectedIndices):
         self.stepSelectionRequest.emit(selectedIndices)
+
+    @QtCore.Slot('')
+    def handleParamSelectionChange(self, selectedIndices):
+        newIndices = [(i+1)*-1 for i in selectedIndices]
+        print selectedIndices, newIndices
+
+        self.stepSelectionRequest.emit(newIndices)
 
 ###############################################
     @QtCore.Slot("")
@@ -1306,7 +1711,9 @@ class SNBuildViewer(Widget):
         self._stepView.clearPanel()
         self._stepView.populatePanel(valueDataDict)
 
-
+    def handleSharedEntryData(self, sharedEntryList):
+        return
+    
     @QtCore.Slot('')
     def handleAddStepDialogData(self, types):
         _stepSelector = StepSelector(types=types, parent=self)
@@ -1325,7 +1732,7 @@ class SNBuildViewer(Widget):
     def insertElement(self, index, data):
         logger.debug("Received signal to insert element at indes: '{}' with data: '{}'".format(index, data))
         if index < 0:
-            self._parameterView.insertStackElement(index, data)
+            self._parameterView.insertStackElement(abs(index)-1, data)
             return
         self._stackView.insertStackElement(index, data)
 
@@ -1387,6 +1794,7 @@ class MainWindow(QtWidgets.QDialog):
         self.buildHandler.stepDeleted.connect(self.buildViewer.deleteElement)
         self.buildHandler.selectionData.connect(self.buildViewer.displayStepData)
         self.buildHandler.addStepDialogData.connect(self.buildViewer.handleAddStepDialogData)
+        self.buildHandler.sharedEntryData.connect(self.buildViewer.handleSharedEntryData)
 
         self.buildViewer.initialDataRequest.connect(self.buildHandler.handleInitialDataRequest)
         self.buildViewer.addStepDialogRequest.connect(self.buildHandler.handleAddStepDialogRequest)
