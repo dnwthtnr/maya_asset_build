@@ -230,8 +230,21 @@ def cleanHistory():
 #endregion
 
 
-# region: |----------- INTERFACE -------------| #
+class MayaTypes:
+    transform = "transform"
+    mesh = 'mesh'
+    joint = 'joint'
 
+
+
+# region: |----------- INTERFACE -------------| #
+class Widget(QtWidgets.QWidget):
+
+    def __init__(self, *args, **kwargs):
+        super(Widget, self).__init__(*args, **kwargs)
+
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
 
 class CaptureSelectionWidget(QtWidgets.QDialog):
     Mesh="MESH"
@@ -274,7 +287,7 @@ class CaptureSelectionWidget(QtWidgets.QDialog):
         _selectionInteractLayout.addWidget(self.selectionDisplay)
         _selectionInteractLayout.addWidget(_selectionCaptureButton, alignment=QtCore.Qt.AlignRight)
         
-        _selectionInteractWidget = QtWidgets.QWidget()
+        _selectionInteractWidget = Widget()
         _selectionInteractWidget.setLayout(_selectionInteractLayout)
         
         
@@ -343,10 +356,9 @@ class CaptureSelectionWidget(QtWidgets.QDialog):
         
     def getSelComponents(self):
         return self.selComponents
-      
 
 
-class Section(QtWidgets.QWidget):
+class Section(Widget):
     
     def __init__(self, labelText, orientation, *args, **kwargs):
         super(Section, self).__init__(*args, **kwargs)
@@ -363,7 +375,7 @@ class Section(QtWidgets.QWidget):
         
     def _buildSection(self, labelText, orientation):
         
-        _sectionWidget = QtWidgets.QWidget()
+        _sectionWidget = Widget()
         
         self._sectionLayout = QtWidgets.QVBoxLayout(_sectionWidget) if orientation == QtCore.Qt.Vertical else QtWidgets.QHBoxLayout(_sectionWidget)
         
@@ -380,28 +392,33 @@ class Section(QtWidgets.QWidget):
 
 # dict to define pipeline order
 
-
 # region: STEPS
 class SStep(QtCore.QObject):
     instanceCount = 0
     instanceType = "base"
+    stepTypeList = []
 
     enterInterrupt = QtCore.Signal(list)
     exitInterrupt = QtCore.Signal(list)
 
-    def __init__(self, name, callback):
+    def __init__(self, name, typeStr):
         super(SStep, self).__init__()
         
         SStep.instanceCount += 1
         self.instanceId = self.getInstanceCount()
 
-        self.stepConfig = {
-            "Step Name": name
-        }
+        self.stepConfigDisplayData = {}
+        self.stepConfig = {}
+
+        self.registerConfigDataEntry('Name', str)
+        self.setConfigDataEntry('Name', name)
+
+        self.registerConfigDataEntry("Step Type", str)
+        self.setConfigDataEntry("Step Type", self.instanceType)
 
         self.buildData = None
+        self.instanceType = typeStr
         self.name = name
-        self.callback = callback
 
     @classmethod
     def getInstanceCount(cls):
@@ -410,6 +427,16 @@ class SStep(QtCore.QObject):
     @classmethod
     def getInstanceType(cls):
         return cls.instanceType
+
+    @classmethod
+    def getStepList(cls):
+        """
+        Returns
+        -------
+        list: A list of names of all registered step types.
+
+        """
+        return
     
     def getInstanceDataArray(self):
         return [self.instanceId, self.__class__.__name__]
@@ -419,13 +446,29 @@ class SStep(QtCore.QObject):
         print ('running', self.__class__.__name__)
         return
 
+    def registerConfigDataEntry(self, key, valueType):
+        self.stepConfigDisplayData[key] = valueType
+
+    def setConfigDataEntry(self, key, value):
+        if not key in self.getConfigDisplayData().keys():
+            logger.error("Given key: '{}' does not exist in registered config data".format(key))
+            raise ValueError("Given key: '{}' does not exist in registered config data".format(key))
+        if not isinstance(value, self.getConfigDisplayData().get(key)):
+            msg = "Given value: '{}' does not match registered type: '{}'".format(value, self.getConfigDisplayData().get(key))
+            logger.error(msg)
+            raise TypeError(msg)
+
+        self.stepConfig[key] = value
+
+    def getConfigDisplayData(self):
+        return self.stepConfigDisplayData
 
     def getConfigData(self):
         return self.stepConfig
 
     def setConfigData(self, configData):
-        # TODO: Validate Data
-        self.stepConfig = configData
+        for key, value in configData.items():
+            self.setConfigDataEntry(key, value)
 
 
     def registerBuildData(self, buildData):
@@ -442,7 +485,7 @@ class SStep(QtCore.QObject):
 
 class SCompoundStep(QtCore.QObject):
     instanceCount = 0
-    instanceType = "Compound"
+    instanceType = "Compund Step"
 
     enterInterrupt = QtCore.Signal(list)
     exitInterrupt = QtCore.Signal(list)
@@ -463,19 +506,28 @@ class SCleanHistory(SStep):
     instanceType = "Clean History"
 
     def __init__(self):
-        super(SCleanHistory, self).__init__(name="Clean History", callback=cleanHistory)
+        super(SCleanHistory, self).__init__(name="Clean History", typeStr="SCleanHistory")
+
+        self.registerConfigDataEntry(key="Target Objects", valueType=list)
+        self.setConfigDataEntry("Target Objects", ["main"])
+
+
+
 
 class SCleanNameSpace(SStep):
+    instanceType = "Clean Namespace"
 
     def __init__(self):
         super(SCleanNameSpace, self).__init__(name="Clean History", callback=cleanHistory)
 
 class SAssignShadingNetwork(SStep):
+    instanceType = "Update Shading Network"
 
     def __init__(self):
         super(SAssignShadingNetwork, self).__init__(name="Clean History", callback=cleanHistory)
 
 class SPivotsToOrigin(SStep):
+    instanceType = "Move Pivots To Origin"
 
     def __init__(self):
         super(SPivotsToOrigin, self).__init__(name="Clean History", callback=cleanHistory)
@@ -484,18 +536,7 @@ class SPivotsToOrigin(SStep):
 # region : cap
 
 class SSetupWrapUvSet(SStep):
-
-    def __init__(self):
-        super(SSetupWrapUvSet, self).__init__(name="Clean History", callback=cleanHistory)
-        # check for UV sets 
-            # if additional set present **INTERUPT** ask user to verify if second set is valid
-            # delete if not valid -- return otherwise
-        # create new set
-        # transfer attrs from buildData.headReferenceMesh
-        # **INTERUPT** Open Uv editor for user to fix any edges in ear holes or mouth holes
-        # **DONE
-
-class SSetupWrapUvSet(SStep):
+    instanceType = "Setup Wrapping UV Set"
 
     def __init__(self):
         super(SSetupWrapUvSet, self).__init__(name="Clean History", callback=cleanHistory)
@@ -510,9 +551,13 @@ class SSetupWrapUvSet(SStep):
 
 #endregion
 
+SStep.stepTypeList.append(SCleanHistory)
+SStep.stepTypeList.append(SCleanNameSpace)
+SStep.stepTypeList.append(SAssignShadingNetwork)
+SStep.stepTypeList.append(SPivotsToOrigin)
+SStep.stepTypeList.append(SSetupWrapUvSet)
 
-
-class SBuildData(QtCore.QObject):
+class SBuildData(SStep):
 
     def __new__(cls, *args, **kwargs):
         instanceCount = 0
@@ -527,12 +572,21 @@ class SBuildData(QtCore.QObject):
         """
         Holds data necessary for steps to run.
         """
-        super(SBuildData, self).__init__()
+        super(SBuildData, self).__init__(name="Build Data", typeStr="SBuildData")
         
         self.clothLodGroups = []
         self.wrapLodGroups = []
         self.simMeshes = []
         self.headReferenceMesh = None # could resolve from node names
+
+        self.registerConfigDataEntry(key="Cloth Lod Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Wrapping Lod Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Sim Group", valueType=MayaTypes.transform)
+        self.registerConfigDataEntry(key="Reference Skeleton", valueType=MayaTypes.joint)
+
+
+    def run(self):
+        pass
 
 class SBuildHandler(QtCore.QObject):
     runTriggered = QtCore.Signal(list)
@@ -540,7 +594,7 @@ class SBuildHandler(QtCore.QObject):
     stepsUpdated = QtCore.Signal(list)
     stepInserted = QtCore.Signal(int, object)
     stepDeleted = QtCore.Signal(int)
-    stepSelectionData = QtCore.Signal(dict)
+    selectionData = QtCore.Signal(dict, dict)
 
     addStepDialogData = QtCore.Signal(list)
 
@@ -550,21 +604,25 @@ class SBuildHandler(QtCore.QObject):
 
     
 
-    def __init__(self, stepTypes, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(SBuildHandler, self).__init__(*args, **kwargs)
 
         self.buildData = SBuildData()
         self.buildRunner = SBuildRunner(self.buildData)
         self.buildRunner.sstepCompleted.connect(self.handleSStepComplete)
+
+        self._selection = []
         
         self._workerThread = QtCore.QThread()
         
         self.runTriggered.connect(self.buildRunner.run)
         self.buildRunner.buildFinished.connect(self.handleBuildFinished)
 
-        self.stepTypes = stepTypes
+        self.stepTypes = SStep.stepTypeList
 
         self.stepList = []
+        self.paramEntityList = [self.buildData]
+
         self.inturruptDeque = []
 
 
@@ -637,13 +695,20 @@ class SBuildHandler(QtCore.QObject):
 
     @QtCore.Slot("")
     def handleSaveStepConfigRequest(self, indexList, stepConfig):
-        # take type
-
         updateList = []
-        for index in indexList:
-            _step = self.stepList[index]
+        for _step in self._selection:
             _step.setConfigData(stepConfig)
-            updateList.append( (index, _step.getConfigData()) )
+
+            _index = None
+            if _step in self.paramEntityList:
+                _index = (self.paramEntityList.index(_step)+1) * -1
+            else:
+                _index = self.stepList.index(_step)
+
+            if not _index:
+                pass
+
+            updateList.append(( _index, _step.getConfigData() ))
 
         self.stepsUpdated.emit( updateList )
 
@@ -654,19 +719,31 @@ class SBuildHandler(QtCore.QObject):
         for index in sorted(indexList, reverse=1):
             self.deleteStep(index)
 
-
+    def handleInitialDataRequest(self):
+        for i, obj in enumerate(self.paramEntityList):
+            self.stepInserted.emit((i+1)*-1, obj.name)
 
     @QtCore.Slot('')
     def handleStepSelectionRequest(self, indexList):
-        # TODO: emit data for steps to display
+        configValues = {}
+        displayConfig = {}
+        steps = []
+        _listToIndex = self.stepList
+        for i in indexList:
+            _index = i
+            if i < 0:
+                _index = abs(i) - 1
+                _listToIndex = self.paramEntityList
 
-        steps = [self.stepList[i] for i in indexList]
-        # handle
-        config = {}
-        for step in steps:
-            print("DISPLAY:", step.getConfigData())
-            config.update(step.getConfigData())
-        self.stepSelectionData.emit(config)
+            print i, _listToIndex
+            _step = _listToIndex[_index]
+            configValues.update(_step.getConfigData())
+            displayConfig.update(_step.getConfigDisplayData())
+            steps.append(_step)
+
+        self._selection = steps
+        self.selectionData.emit(displayConfig, configValues)
+        pass
 
 
     @QtCore.Slot('')
@@ -720,10 +797,6 @@ class SBuildRunner(QtCore.QObject):
         self.buildFinished.emit(0)
 
 #endregion
-
-
-
-
 
 # region: NODE GRAPH
 
@@ -805,6 +878,21 @@ class LayoutSelectionEventHandler(QtCore.QObject):
 
         return False
 
+    def selectedStyle(self, objectName):
+
+        objectSpecifier = "QObject"
+        if objectName:
+            objectSpecifier = "#{}".format(objectName)
+        style = objectSpecifier + "{border: 2px solid light-blue; background-color: white}"
+        return style
+
+    def unselectedStyle(self, objectName):
+        objectSpecifier = "QObject"
+        if objectName:
+            objectSpecifier = "#{}".format(objectName)
+        style = objectSpecifier + "{border: 0px;}"
+        return style
+
     def handleMultiSelectionMouseEvent(self, qobject, qevent):
         if qevent.type() == QtCore.QEvent.Type.MouseButtonPress:
             if not hasattr(qobject, "selected") or not qobject.selected:
@@ -812,13 +900,13 @@ class LayoutSelectionEventHandler(QtCore.QObject):
 
                 self.selectedObjects.append(qobject)
 
-                qobject.setStyleSheet("border: 2px solid blue")
+                qobject.setStyleSheet(self.selectedStyle(qobject.objectName()))
                 logger.debug("QObject: {} -- [selected] attribute set to {}")
 
             else:
                 qobject.selected = False
                 self.selectedObjects.pop(self.selectedObjects.index(qobject))
-                qobject.setStyleSheet("border: 0px")
+                qobject.setStyleSheet(self.unselectedStyle(qobject.objectName()))
                 logger.debug("QObject: {} -- Set to selected")
 
             self.selectionChanged.emit()
@@ -835,12 +923,12 @@ class LayoutSelectionEventHandler(QtCore.QObject):
 
                 qobject.selected = True
                 self.selectedObjects.append(qobject)
-                qobject.setStyleSheet("border: 2px solid blue")
+                qobject.setStyleSheet(self.selectedStyle(qobject.objectName()))
                 logger.debug("QObject: {} -- [selected] attribute set to {}")
 
             else:
                 qobject.selected = False
-                qobject.setStyleSheet("border: 0px")
+                qobject.setStyleSheet(self.unselectedStyle(qobject.objectName()))
 
                 self.selectedObjects = []
 
@@ -849,11 +937,12 @@ class LayoutSelectionEventHandler(QtCore.QObject):
             self.selectionChanged.emit()
             logger.debug("QObject: [ {}.selected ] \t attribute set to {}".format(qobject, qobject.selected))
 
-class StackElement(QtWidgets.QWidget):
+class StackElement(Widget):
     
     
     def __init__(self, name="Step", *args, **kwargs):
         super(StackElement, self).__init__(*args, **kwargs)
+        self.setObjectName("StackElement")
         
         _layout = QtWidgets.QHBoxLayout()
         self.setLayout(_layout)
@@ -867,7 +956,7 @@ class StackElement(QtWidgets.QWidget):
 
         self.nameLabel.setText(name.get("Step Name"))
 
-class StackView(QtWidgets.QWidget):
+class StackView(Widget):
     addButtonClicked = QtCore.Signal()
     deleteButtonClicked = QtCore.Signal(list)
     buildButtonClicked = QtCore.Signal()
@@ -879,13 +968,19 @@ class StackView(QtWidgets.QWidget):
     
     
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, selectionEventFilter=None, *args, **kwargs):
         super(StackView, self).__init__(*args, **kwargs)
+        self.setObjectName("StackView")
 
-        self.selectionEventFilter = LayoutSelectionEventHandler()
+        self.selectionEventFilter = selectionEventFilter
+        if not selectionEventFilter:
+            self.selectionEventFilter = LayoutSelectionEventHandler()
         self.selectionEventFilter.selectionChanged.connect(self.handleSelectionChanged)
 
         self.stackScene = self.setupStackScene()
+        self.stackScene.setObjectName("StackScene")
+        self.stackScene.setAutoFillBackground(True)
+
         self.toolbar = self.setupToolbar()
         
         _layout = QtWidgets.QVBoxLayout()
@@ -893,19 +988,18 @@ class StackView(QtWidgets.QWidget):
         
         self.layout().addWidget(self.toolbar, alignment=QtCore.Qt.AlignTop)
         self.layout().addWidget(self.stackScene)
-        
-        
+
     def setupStackScene(self):
         _layout = QtWidgets.QVBoxLayout()
         _layout.addStretch(1)
 
-        widget = QtWidgets.QWidget()
+        widget = Widget()
         widget.setLayout(_layout)
         return widget
 
     def setupToolbar(self):
         _layout = QtWidgets.QHBoxLayout()
-        widget = QtWidgets.QWidget()
+        widget = Widget()
         widget.setLayout(_layout)
 
 
@@ -953,7 +1047,6 @@ class StackView(QtWidgets.QWidget):
         self.stackScene.layout().insertWidget(index, step)
 
         logger.debug("Inserted '{}' into stack at index '{}'.".format(name, index))
-        
 
     def deleteStackElement(self, index):
         element = self.elementAt(index)
@@ -1001,7 +1094,7 @@ class StepSelector(QtWidgets.QDialog):
         self.setLayout(QtWidgets.QVBoxLayout())
 
         self.typeLayout = QtWidgets.QVBoxLayout()
-        _typeWidget = QtWidgets.QWidget()
+        _typeWidget = Widget()
         _typeWidget.setLayout(self.typeLayout)
         for type in types:
             _label = QtWidgets.QLabel(text=type.getInstanceType())
@@ -1016,7 +1109,7 @@ class StepSelector(QtWidgets.QDialog):
         _buttonlayout = QtWidgets.QHBoxLayout()
         _buttonlayout.addWidget(selectButton)
         _buttonlayout.addWidget(cancelButton)
-        _buttonWidget = QtWidgets.QWidget()
+        _buttonWidget = Widget()
         _buttonWidget.setLayout(_buttonlayout)
 
         self.layout().addWidget(_typeWidget)
@@ -1042,7 +1135,7 @@ class StepSelector(QtWidgets.QDialog):
         logger.error("Must select a step type.")
         return
 
-class StepView(QtWidgets.QWidget):
+class StepView(Widget):
     saveUpdatedDataRequest = QtCore.Signal(dict)
 
     def __init__(self, *args, **kwargs):
@@ -1093,7 +1186,9 @@ class StepView(QtWidgets.QWidget):
 #endregion
 
 
-class SNBuildViewer(QtWidgets.QWidget):
+class SNBuildViewer(Widget):
+    initialDataRequest = QtCore.Signal()
+
     # Only pass around indexes
     buildRequest = QtCore.Signal()
     addStepDialogRequest = QtCore.Signal()
@@ -1114,15 +1209,16 @@ class SNBuildViewer(QtWidgets.QWidget):
         _centralLayout.addStretch(1)
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
-        
 
         self._nodeView = self.setupNodeView()
+        self.stackSelectionEventFilter = LayoutSelectionEventHandler(selectionMode=LayoutSelectionEventHandler.SingleSelection)
+        self._parameterView = self.setupParameterView()
         self._stackView = self.setupStackView()
+        self._stackView.layout().insertWidget(1, self._parameterView, alignment=QtCore.Qt.AlignTop)
 
-        # TODO: CONNECT SIGNALS TO THIS
         self._stepView = self.setupStepView()
 
-        self.layout().addWidget(self._stackView, alignment=QtCore.Qt.AlignTop)
+        self.layout().addWidget(self._stackView, stretch=1, alignment=QtCore.Qt.AlignTop)
         self.layout().addWidget(self._stepView, alignment=QtCore.Qt.AlignTop)
 
     def setupNodeView(self):
@@ -1142,12 +1238,27 @@ class SNBuildViewer(QtWidgets.QWidget):
         self.view.setScene(self.scene)
 
     def setupStackView(self):
-        _view = StackView()
+        _view = StackView(selectionEventFilter=self.stackSelectionEventFilter)
+
+        _view.setStyleSheet('#StackView {border: 2px solid dark-grey} #StackScene {border: 2px dotted grey};')
+        _view.setAutoFillBackground(True)
 
         _view.addButtonClicked.connect(self.handleAddDialogClick)
         _view.buildButtonClicked.connect(self.handleBuildButtonClick)
         _view.deleteButtonClicked.connect(self.handleDeleteButtonClick)
         _view.elementSelectionChanged.connect(self.handleSelectionChange)
+
+        _view.setMinimumHeight(600)
+
+        return _view
+
+    def setupParameterView(self):
+        _view = StackView(selectionEventFilter=self.stackSelectionEventFilter)
+        _view.setObjectName("paramStackView")
+        _view.setStyleSheet('#paramStackView {border: 2px dotted red} #StackScene{border: 0px};')
+
+        _view.toolbar.hide()
+        _view.elementSelectionChanged.connect(partial(self.handleSelectionChange, parameter=True))
 
         return _view
 
@@ -1155,7 +1266,6 @@ class SNBuildViewer(QtWidgets.QWidget):
         _view = StepView()
         _view.saveUpdatedDataRequest.connect(self.handleSaveStepClick)
         return _view
-
 
     @QtCore.Slot("handleAddButtonClick")
     def handleSaveStepClick(self, configData):
@@ -1182,14 +1292,19 @@ class SNBuildViewer(QtWidgets.QWidget):
         self.deleteStepRequest.emit(indexList)
 
     @QtCore.Slot('')
-    def handleSelectionChange(self, selectedIndices):
+    def handleSelectionChange(self, selectedIndices, parameter=False):
+        if parameter:
+            newIndices = [i*-1 for i in selectedIndices]
+            self.stepSelectionRequest.emit(newIndices)
+            return
+
         self.stepSelectionRequest.emit(selectedIndices)
 
 ###############################################
     @QtCore.Slot("")
-    def displayStepData(self, data):
+    def displayStepData(self, displayDataDict, valueDataDict):
         self._stepView.clearPanel()
-        self._stepView.populatePanel(data)
+        self._stepView.populatePanel(valueDataDict)
 
 
     @QtCore.Slot('')
@@ -1207,8 +1322,12 @@ class SNBuildViewer(QtWidgets.QWidget):
         self.addStepRequest.emit(type, index)
 
     @QtCore.Slot("insertElement")
-    def insertElement(self, data, index):
-        self._stackView.insertStackElement(data, index)
+    def insertElement(self, index, data):
+        logger.debug("Received signal to insert element at indes: '{}' with data: '{}'".format(index, data))
+        if index < 0:
+            self._parameterView.insertStackElement(index, data)
+            return
+        self._stackView.insertStackElement(index, data)
 
     @QtCore.Slot("deleteElement")
     def deleteElement(self, index):
@@ -1225,6 +1344,9 @@ class SNBuildViewer(QtWidgets.QWidget):
         """
         # [ (INDEX: int, DATA: dict) ]
         for index, data in updateList:
+            if index < 0:
+                self._parameterView.updateStackElement(index, data)
+                continue
             self._stackView.updateStackElement(index, data)
 
 
@@ -1247,11 +1369,7 @@ class MainWindow(QtWidgets.QDialog):
         _centralLayout.setContentsMargins(10,10,10,10)
         self.setLayout(_centralLayout)
 
-        self.buildHandler = SBuildHandler(stepTypes=[
-            SCleanHistory,
-            SAssignShadingNetwork,
-            SCleanNameSpace
-            ])
+        self.buildHandler = SBuildHandler()
 
         self.buildViewer = SNBuildViewer()
 
@@ -1267,9 +1385,10 @@ class MainWindow(QtWidgets.QDialog):
         self.buildHandler.stepsUpdated.connect(self.buildViewer.updateElements)
         self.buildHandler.stepInserted.connect(self.buildViewer.insertElement)
         self.buildHandler.stepDeleted.connect(self.buildViewer.deleteElement)
-        self.buildHandler.stepSelectionData.connect(self.buildViewer.displayStepData)
+        self.buildHandler.selectionData.connect(self.buildViewer.displayStepData)
         self.buildHandler.addStepDialogData.connect(self.buildViewer.handleAddStepDialogData)
 
+        self.buildViewer.initialDataRequest.connect(self.buildHandler.handleInitialDataRequest)
         self.buildViewer.addStepDialogRequest.connect(self.buildHandler.handleAddStepDialogRequest)
         self.buildViewer.deleteStepRequest.connect(self.buildHandler.handleDeleteStepRequest)
         self.buildViewer.stepSelectionRequest.connect(self.buildHandler.handleStepSelectionRequest)
@@ -1277,50 +1396,7 @@ class MainWindow(QtWidgets.QDialog):
         self.buildViewer.saveStepConfigRequest.connect(self.buildHandler.handleSaveStepConfigRequest)
         self.buildViewer.addStepRequest.connect(self.buildHandler.insertStep)
 
-
-        # region: UTILITY
-
-        clampLodInfluences = QtWidgets.QPushButton(text="Clamp LOD Influences")
-        clampLodInfluences.clicked.connect(self.clampMainGrpLodInfluences)
-
-
-        clampLodBlendWeights = QtWidgets.QPushButton(text="Clamp LOD Blend Weights")
-        clampLodBlendWeights.clicked.connect(self.clampMainGrpClothBlendWeights)
-
-        button = QtWidgets.QPushButton(text="Nothing Yet...")
-
-
-        utilityWidgets = [
-        clampLodInfluences,
-        clampLodBlendWeights,
-        button
-        ]
-        self.utilitiesSection = Section("Sing Use Utilities", QtCore.Qt.Horizontal)
-        [self.utilitiesSection.addWidget(_widget) for _widget in utilityWidgets]
-        self.addWidget(self.utilitiesSection)
-        # endregion
-
-
-        #region: PARAMS
-        self.mainGrpSelection = CaptureSelectionWidget(title="Main Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
-        self.capGrpSelection = CaptureSelectionWidget(title="Cap Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
-        self.clothLodGrpSelection = CaptureSelectionWidget(title="Cloth Lod Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
-        self.clothGrpSelection = CaptureSelectionWidget(title="Cloth Sim Group", mode=CaptureSelectionWidget.CurrentSingleSelection)
-
-        paramWidgets = [
-                self.mainGrpSelection,
-                self.capGrpSelection,
-                self.clothLodGrpSelection,
-                self.clothGrpSelection
-                ]
-
-
-        self.paramSection = Section("Parameters", QtCore.Qt.Vertical)
-        [self.paramSection.addWidget(_widget) for _widget in paramWidgets]
-        self.addWidget(self.paramSection)
-        #endregion
-
-        return
+        self.buildViewer.initialDataRequest.emit()
 
 
     ####### TODO: Utility Methods -- Decouple into data class with signals at some point -- this is quicker for now
