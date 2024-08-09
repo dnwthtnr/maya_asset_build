@@ -246,8 +246,6 @@ def isGeo(objectName):
 
 def getFileList(fullPath=True):
     _currentFile = cmds.file(q=True, sn=True)
-    print
-    _currentFile
     _fileDir = os.path.dirname(_currentFile)
     contents = os.listdir(_fileDir)
     contents.remove(_currentFile[len(_fileDir + '/'):])  # Remove current file from list
@@ -258,7 +256,6 @@ def getFileList(fullPath=True):
     return contents
 
 
-print(getFileList())
 
 #fileSelection = 'D:/Morrison_dev/MorrisonData/Raw/Characters/Generic/Human/Universal/a_HAR_HN_FauxHawk_01/Models/a_HAR_HN_FauxHawk_01_card.mb'
 
@@ -367,8 +364,7 @@ def filterMainGroup(mainGroupList):
 
 
 def getLodContents(mainGroup, lodLevel):
-    _lodName = "lod{}".format(str
-    {lodlevel))
+    _lodName = "lod{}".format( lodLevel)
     lodPath = "{}|{}".format(mainGroup, lodLevel)
     groupContents = cmds.listRelatives(lodPath, ad=True, f=True)
     return groupContents
@@ -653,7 +649,7 @@ class SStep(QtCore.QObject):
     
     def getInstanceDataArray(self):
         return [self.instanceId, self.__class__.__name__]
-    
+
     def solveSharedValues(self):
         """
         Iterates through config to resolve any shared attributes and get true value
@@ -663,10 +659,10 @@ class SStep(QtCore.QObject):
         for key, value in copy.copy(self.stepConfig.items()):
             if not "$SHARE$" in value:
                 continue
-                
+
             solvedValue = self.buildData.getSharedEntry(value)
             self.setConfigDataEntry(key, solvedValue)
-            
+
 
     def run(self):
         print ('running', self.__class__.__name__)
@@ -973,7 +969,7 @@ class SBuildHandler(QtCore.QObject):
     def handleRunTriggered(self):
         self.buildRunner.run()
 
-    def insertStep(self, stepType: SStep, index):
+    def insertStep(self, stepType, index):
         """
 
         Parameters
@@ -1120,18 +1116,25 @@ class SBuildHandler(QtCore.QObject):
             Emits list of serialized shared entries
 
         """
-        # TODO: Check typing 
-        sharables = []
-        for instanceId, shareDict in self.buildData.sharedEntryRegistrar.items():
-            instanceIndex = self.getStepIndex(instanceId)
-            if instanceIndex > instanceId:
-                # instance happens after step requesting connectables
-                continue
-                
-            for key in list(shareDict.keys()):
-                sharedRef = "$SHARE${}.{}".format(instanceId, key)
+        # currently only support single selection
+        logger.debug("Handling shared data request for steps: {}".format(self._selection))
+        for step in self._selection:
+            # TODO: Check typing
+            sharables = []
+            for instanceId, shareDict in self.buildData.sharedEntryRegistrar.items():
+                instanceIndex = self.getStepIndex(step.instanceId)
+                if instanceIndex > instanceId:
+                    # instance happens after step requesting connectables
+                    continue
+
+                for key in list(shareDict.keys()):
+                    sharedRef = "$SHARE${}.{}".format(instanceId, key)
+                    sharables.append(sharedRef)
+
+            for key, value in self.buildData.stepConfig.items():
+                sharedRef = "$PARAM${}.{}".format("BuildData", key)
                 sharables.append(sharedRef)
-        self.sharedEntryData.emit(sharables)
+            self.sharedEntryData.emit(sharables)
 
     @QtCore.Slot('')
     def handleBuildRequest(self):
@@ -1144,7 +1147,7 @@ class SBuildHandler(QtCore.QObject):
     def run(self):
         # QThread stuff then use inturrupt to pause
         logger.debug("Moving runner to worker thread and starting build.")
-               
+
         self.buildRunner.moveToThread(self._workerThread)
         self._workerThread.start()
         self.runTriggered.emit(self.stepList)
@@ -1530,8 +1533,8 @@ class StepSelector(QtWidgets.QDialog):
 
 class StepView(Widget):
     saveUpdatedDataRequest = QtCore.Signal(dict)
-    
-    sharedDataRequest = QtCore.Signal(int)
+
+    sharedDataRequest = QtCore.Signal(str)
 
     def __init__(self, *args, **kwargs):
         super(StepView, self).__init__(*args, **kwargs)
@@ -1540,16 +1543,35 @@ class StepView(Widget):
         _layout.addStretch(1)
         self.setLayout(_layout)
 
-        self.rawTextEdit = QtWidgets.QTextEdit()
+        _editorLayout = QtWidgets.QVBoxLayout()
+        self.editorsWidget = QtWidgets.QWidget()
+        self.editorsWidget.setLayout(_editorLayout)
         self.saveButton = QtWidgets.QPushButton(text="Save")
         self.saveButton.clicked.connect(self.handleSaveButtonClick)
 
         self.layout().insertWidget(0, self.saveButton, alignment=QtCore.Qt.AlignBottom)
-        self.layout().insertWidget(0, self.rawTextEdit, alignment=QtCore.Qt.AlignTop)
+        self.layout().insertWidget(0, self.editorsWidget, alignment=QtCore.Qt.AlignTop)
 
+
+        self.typeEditorDict = {
+            MayaTypes.transform: partial(CaptureSelectionWidget),
+
+        }
+
+
+    def getEditorValue(self, name):
+        for i in range(0, self.editorsWidget.layout().count()):
+            _row = self.editorsWidget.layout().itemAt(i).widget()
+            _label = _row.layout().itemAt(0).widget()
+            if not _label.text() == name:
+                continue
+            _editor = _row.layout().itemAt(1).widget()
+            _val = _editor.value()
+            returnVal = ast.literal_eval(_val)
+            return returnVal
 
     @QtCore.Slot('')
-    def populatePanel(self, stepData):
+    def populatePanel(self, displayData, stepData):
         """
 
         Parameters
@@ -1557,20 +1579,51 @@ class StepView(Widget):
         stepData: dict
 
         """
+
         # show steps data
-        self.rawTextEdit.setText(str(stepData))
+        # self.rawTextEdit.setText(str(stepData))
+
+        for name, type in displayData.items():
+            print name, type
+            _layout = QtWidgets.QHBoxLayout()
+            # widgetType = self.typeEditorDict.get(type)
+            widget = QtWidgets.QLineEdit(text=str(stepData.get(name)))
+            label = QtWidgets.QLabel(text=name)
+
+            connectButton = QtWidgets.QPushButton(text="+")
+            connectButton.clicked.connect(partial(self.handleConnectButtonClick, name=name, type=type))
+
+            _layout.addWidget(label, alignment=QtCore.Qt.AlignLeft)
+            _layout.addWidget(widget, alignment=QtCore.Qt.AlignRight, stretch=1)
+            _layout.addWidget(connectButton, alignment=QtCore.Qt.AlignRight)
+
+            _row = QtWidgets.QWidget()
+            _row.setLayout(_layout)
+
+            self.editorsWidget.layout().addWidget(_row)
 
 
-    def displayConnectableEntries(self):
+    def displayConnectableEntries(self, connectables):
         # TODO: Setup better step display -- make menu on each element with mixing to 'connect attr'
-        
+
         # TODO; from there send request to build handler to get shared attr and spawn a menu when response is heard
-        
+
         # TODO; After selecting shared value it will set element to 'connected' state and the value will be a #SHARE$ string.
+        
+        # TODO: switch this out for not a step sleector -- Trips and error due to not being of SSTep type
+        _view = StepSelector(types=connectables, parent=self)
+        _view.stepTypeSelected.connect(self.connectableEntrySelected)
+        _view.show()
         return
 
+    def connectableEntrySelected(self, entry):
+        print entry
+
     def clearPanel(self):
-        self.rawTextEdit.clear()
+        while self.editorsWidget.layout().count() > 0:
+            _row = self.editorsWidget.layout().itemAt(0).widget()
+            self.editorsWidget.layout().removeWidget(_row)
+            _row.deleteLater()
 
 
     @QtCore.Slot('')
@@ -1585,6 +1638,10 @@ class StepView(Widget):
             return
 
         self.saveUpdatedDataRequest.emit(evalData)
+
+    def handleConnectButtonClick(self, name, type):
+        self.sharedDataRequest.emit(name)
+        return
 
 #endregion
 
@@ -1604,6 +1661,7 @@ class SNBuildViewer(Widget):
     updateStepRequest = QtCore.Signal(int, dict)
 
     stepSelectionRequest = QtCore.Signal(list)
+    sharedEntryDataRequest = QtCore.Signal(str)
     
     def __init__(self, parent=None, *args, **kwargs):
         super(SNBuildViewer, self).__init__(parent=parent, *args, **kwargs)
@@ -1668,6 +1726,7 @@ class SNBuildViewer(Widget):
     def setupStepView(self):
         _view = StepView()
         _view.saveUpdatedDataRequest.connect(self.handleSaveStepClick)
+        _view.sharedDataRequest.connect(self.sharedEntryDataRequest.emit)
         return _view
 
     @QtCore.Slot("handleAddButtonClick")
@@ -1709,11 +1768,12 @@ class SNBuildViewer(Widget):
     @QtCore.Slot("")
     def displayStepData(self, displayDataDict, valueDataDict):
         self._stepView.clearPanel()
-        self._stepView.populatePanel(valueDataDict)
+        self._stepView.populatePanel(displayDataDict, valueDataDict)
 
     def handleSharedEntryData(self, sharedEntryList):
+        self._stepView.displayConnectableEntries(sharedEntryList)
         return
-    
+
     @QtCore.Slot('')
     def handleAddStepDialogData(self, types):
         _stepSelector = StepSelector(types=types, parent=self)
@@ -1803,6 +1863,7 @@ class MainWindow(QtWidgets.QDialog):
         self.buildViewer.buildRequest.connect(self.buildHandler.handleBuildRequest)
         self.buildViewer.saveStepConfigRequest.connect(self.buildHandler.handleSaveStepConfigRequest)
         self.buildViewer.addStepRequest.connect(self.buildHandler.insertStep)
+        self.buildViewer.sharedEntryDataRequest.connect(self.buildHandler.handleStepSharedRequest)
 
         self.buildViewer.initialDataRequest.emit()
 
